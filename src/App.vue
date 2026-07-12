@@ -297,28 +297,20 @@ const showDownload = computed(() => !!qrDataUrl.value)
           />
         </div>
 
-        <!-- 预览 + 结果 -->
+        <!-- 识别结果 -->
         <div v-else class="decode-result">
-          <div class="preview-box">
-            <img :src="imageSrc" alt="preview" class="preview-img" />
-            <button class="btn-icon close-btn" @click="clearDecode" title="清除">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
           <canvas ref="canvasRef" hidden />
 
-          <div class="decode-actions">
-            <button class="btn-secondary" @click="takeScreenshot">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">
-                <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
-                <circle cx="12" cy="13" r="4"/>
-              </svg>
-              重新截图
-            </button>
+          <!-- 未识别到内容 -->
+          <div v-if="!decodedText && !decodeError" class="result-status">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" class="status-icon">
+              <circle cx="24" cy="24" r="20" />
+              <path d="M24 16v8M24 32h.01" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            <p>正在识别二维码…</p>
           </div>
 
+          <!-- 识别成功 -->
           <div v-if="decodedText" class="result-card">
             <div class="result-header">
               <span class="result-label">识别结果</span>
@@ -333,7 +325,24 @@ const showDownload = computed(() => !!qrDataUrl.value)
             <p class="result-text">{{ decodedText }}</p>
           </div>
 
+          <!-- 错误提示 -->
           <p v-if="decodeError" class="error-msg">{{ decodeError }}</p>
+
+          <div class="decode-actions">
+            <button class="btn-secondary" @click="takeScreenshot">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">
+                <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+              </svg>
+              重新截图
+            </button>
+            <button class="btn-secondary" @click="clearDecode">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+              清除
+            </button>
+          </div>
         </div>
       </section>
 
@@ -580,39 +589,18 @@ const showDownload = computed(() => !!qrDataUrl.value)
   gap: 8px;
 }
 
-.preview-box {
-  position: relative;
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--bg);
-  display: flex;
-  justify-content: center;
-  max-height: 340px;
+.result-status {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
-.preview-img {
-  max-width: 100%;
-  max-height: 340px;
-  object-fit: contain;
-}
-
-.close-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.45);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.close-btn svg {
-  width: 16px;
-  height: 16px;
+.status-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 12px;
+  opacity: 0.4;
 }
 
 .result-card {

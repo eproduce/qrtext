@@ -132,12 +132,10 @@ function onPaste(e: ClipboardEvent) {
 // ── 解码：系统框选截图 ──
 async function takeScreenshot() {
   try {
-    const path = await invoke<string>('take_screenshot')
-    const response = await fetch(`file://${path}`)
-    if (!response.ok) throw new Error('File not found')
-    const blob = await response.blob()
-    const file = new File([blob], 'screenshot.png', { type: 'image/png' })
-    processImage(file)
+    const dataUrl = await invoke<string>('take_screenshot')
+    imageSrc.value = dataUrl
+    await nextTick()
+    decodeQR()
   } catch (err) {
     const msg = String(err)
     if (msg.includes('已取消')) return

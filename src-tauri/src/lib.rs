@@ -1,8 +1,9 @@
 use std::process::Command;
+use base64::Engine;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
 use tauri::{Emitter, Manager};
 
-/// 调用系统截图工具框选区域，保存到临时文件
+/// 调用系统截图工具框选区域，返回 base64 图片数据
 #[tauri::command]
 fn take_screenshot() -> Result<String, String> {
   let path = std::env::temp_dir().join("qrtext_screenshot.png");
@@ -21,19 +22,13 @@ fn take_screenshot() -> Result<String, String> {
 
   #[cfg(target_os = "linux")]
   {
-    let tools: &[(&str, &[&str])] = &[
-      ("gnome-screenshot", &["-a", "-f"]),
-      ("spectacle", &["-b", "-n", "-o"]),
-      ("xfce4-screenshooter", &["-r", "-s"]),
-      ("ksnip", &["-r", "-s"]),
-    ];
     let mut ok = false;
-    for (tool, args) in tools {
+    for (tool, args) in &[
+      ("gnome-screenshot", &["-a", "-f"][..]),
+      ("spectacle", &["-b", "-n", "-o"][..]),
+    ] {
       if let Ok(status) = Command::new(tool).args(*args).arg(&path).status() {
-        if status.success() {
-          ok = true;
-          break;
-        }
+        if status.success() { ok = true; break; }
       }
     }
     if !ok {
@@ -47,28 +42,13 @@ fn take_screenshot() -> Result<String, String> {
       .args(["/c", "start", "/wait", "ms-screenclip:"])
       .status()
       .map_err(|_| "无法启动截图工具".to_string())?;
-
-    // Windows: ms-screenclip 截图到剪贴板，用 PowerShell 保存
-    let ps = r#"
-Add-Type -AssemblyName System.Windows.Forms
-if ([Windows.Forms.Clipboard]::ContainsImage()) {
-  $img = [Windows.Forms.Clipboard]::GetImage()
-  $img.Save($env:TEMP + '\qrtext_screenshot.png', [System.Drawing.Imaging.ImageFormat]::Png)
-  Write-Output 'ok'
-} else {
-  Write-Output 'no_image'
-}
-"#;
-    let output = Command::new("powershell")
-      .args(["-Command", ps])
-      .output()
-      .map_err(|e| format!("PowerShell 执行失败: {e}"))?;
-    if !String::from_utf8_lossy(&output.stdout).contains("ok") {
-      return Err("剪贴板中无图片".into());
-    }
+    let ps = r#"Add-Type -AssemblyName System.Windows.Forms;if([Windows.Forms.Clipboard]::ContainsImage()){[Windows.Forms.Clipboard]::GetImage().Save($env:TEMP+'\qrtext_screenshot.png','Png')}"#;
+    Command::new("powershell").args(["-Command", ps]).output().ok();
   }
 
-  Ok(path.to_string_lossy().to_string())
+  // 读取并返回 base64
+  let bytes = std::fs::read(&path).map_err(|_| "截图文件未生成，请重试".to_string())?;
+  Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

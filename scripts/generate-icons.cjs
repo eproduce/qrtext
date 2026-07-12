@@ -2,6 +2,7 @@ const sharp = require('sharp')
 const { execSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
+const toIco = require('to-ico')
 
 const ICONS_DIR = path.join(__dirname, '..', 'src-tauri', 'icons')
 const SVG = path.join(ICONS_DIR, 'icon.svg')
@@ -35,19 +36,13 @@ async function generate() {
 
   // ── ICO (Windows) ──
   console.log('  Generating icon.ico ...')
-  const png256 = path.join(ICONS_DIR, 'icon.png')
-  try {
-    execSync(`magick ${png256} -define icon:auto-resize=256,128,64,48,32,16 ${path.join(ICONS_DIR, 'icon.ico')}`, { stdio: 'pipe' })
-    console.log('  ✓ icon.ico')
-  } catch {
-    try {
-      execSync(`convert ${png256} ${path.join(ICONS_DIR, 'icon.ico')}`, { stdio: 'pipe' })
-      console.log('  ✓ icon.ico (convert)')
-    } catch {
-      console.log('  ⚠ imagemagick not found, copying png as ico fallback')
-      fs.copyFileSync(png256, path.join(ICONS_DIR, 'icon.ico'))
-    }
-  }
+  const icoSizes = [16, 24, 32, 48, 64, 128, 256]
+  const icoPngs = await Promise.all(
+    icoSizes.map(s => sharp(SVG).resize(s, s).png().toBuffer())
+  )
+  const icoBuf = await toIco(icoPngs)
+  fs.writeFileSync(path.join(ICONS_DIR, 'icon.ico'), icoBuf)
+  console.log('  ✓ icon.ico (multi-size)')
 
   // ── ICNS (macOS) ──
   console.log('  Generating icon.icns ...')

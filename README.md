@@ -71,13 +71,22 @@ Push 到 `main` 分支后，GitHub Actions 自动构建三平台包：
 
 当前版本：**0.1.0**
 
-版本变更记录请查看 [CHANGELOG.md](./CHANGELOG.md)。
-
-升级版本号：
+每次提交前自动升级版本号并生成 CHANGELOG：
 
 ```bash
-npm run bump-version 0.2.0
+npm run release          # patch 升级 (0.1.0 → 0.1.1)
+npm run release:minor    # minor 升级 (0.1.1 → 0.2.0)
+npm run release:major    # major 升级 (0.2.0 → 1.0.0)
 ```
+
+脚本会自动：
+1. 升级 `package.json` 和 `tauri.conf.json` 版本号
+2. 从 git commit 记录生成 `CHANGELOG.md` 条目
+3. 提交并打 tag
+
+然后 `git push origin main --tags` 即可触发正式 Release。
+
+版本变更记录请查看 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## �📄 License
 

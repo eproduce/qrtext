@@ -198,10 +198,12 @@ async function generateQR(text: string) {
       width: qrSize.value,
       margin: 2,
       color: { dark: '#1d1d1f', light: '#ffffff' },
+      errorCorrectionLevel: 'L',
+      version: 40,
     })
     qrError.value = ''
   } catch {
-    qrError.value = '生成失败，请检查输入内容'
+    qrError.value = '内容过长超出二维码容量（约 2900 字节），请精简文本'
     qrDataUrl.value = ''
   }
 }
@@ -352,7 +354,7 @@ const showDownload = computed(() => !!qrDataUrl.value)
           <div class="input-area">
             <div class="input-header">
               <span class="input-label">输入文本内容</span>
-              <span class="char-count">{{ charCount }} 字</span>
+              <span class="char-count">{{ charCount }} 字 / 约 2900 字上限</span>
             </div>
             <textarea
               v-model="encodeText"

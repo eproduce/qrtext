@@ -65,6 +65,12 @@ const newChangelog = titleEnd > 0
 
 fs.writeFileSync(changelogPath, newChangelog)
 
+// ── 更新 README 版本号 ──
+const readmePath = path.join(ROOT, 'README.md')
+let readme = fs.readFileSync(readmePath, 'utf-8')
+readme = readme.replace(/当前版本：\*\*[\d.]+\*\*/, `当前版本：**${newVersion}**`)
+fs.writeFileSync(readmePath, readme)
+
 // ── Git 操作 ──
 const commitMsg = `chore: release v${newVersion}`
 execSync('git add -A', { cwd: ROOT })

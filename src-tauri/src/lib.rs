@@ -98,8 +98,6 @@ pub fn run() {
       let app_menu = SubmenuBuilder::new(app, "QRTEXT")
         .item(&about_item)
         .separator()
-        .services()
-        .separator()
         .item(&hide_item)
         .item(&quit_item)
         .build()?;

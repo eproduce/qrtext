@@ -1,23 +1,53 @@
+use std::process::Command;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
 use tauri::{Emitter, Manager};
 
-/// 纯 Rust 跨平台全屏截图（基于 screenshots）
+/// 截图：优先 Rust 全屏捕获，macOS 无权限时回退 screencapture
 #[tauri::command]
 fn take_screenshot() -> Result<String, String> {
-  let screens = screenshots::Screen::all()
-    .map_err(|e| format!("无法获取显示器: {e}"))?;
-
   let path = std::env::temp_dir().join("qrtext_screenshot.png");
 
-  screens
-    .first()
-    .ok_or("未检测到显示器")?
-    .capture()
-    .map_err(|e| format!("截图失败: {e}"))?
-    .save(&path)
-    .map_err(|e| format!("保存截图失败: {e}"))?;
+  // 尝试纯 Rust 截图
+  if let Ok(screens) = screenshots::Screen::all() {
+    if let Some(screen) = screens.first() {
+      if let Ok(image) = screen.capture() {
+        if image.save(&path).is_ok() {
+          return Ok(path.to_string_lossy().to_string());
+        }
+      }
+    }
+  }
 
-  Ok(path.to_string_lossy().to_string())
+  // macOS 回退：使用 screencapture（无需屏幕录制权限）
+  #[cfg(target_os = "macos")]
+  {
+    let status = Command::new("screencapture")
+      .args(["-x", "-C"])
+      .arg(&path)
+      .status()
+      .map_err(|e| format!("截图失败: {e}"))?;
+    if status.success() {
+      return Ok(path.to_string_lossy().to_string());
+    }
+  }
+
+  // Linux 回退
+  #[cfg(target_os = "linux")]
+  {
+    for (tool, args) in &[
+      ("gnome-screenshot", &["-f"][..]),
+      ("spectacle", &["-b", "-n", "-o"]),
+      ("import", &[][..]),
+    ] {
+      if let Ok(status) = Command::new(tool).args(*args).arg(&path).status() {
+        if status.success() {
+          return Ok(path.to_string_lossy().to_string());
+        }
+      }
+    }
+  }
+
+  Err("截图失败，请检查屏幕录制权限".into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

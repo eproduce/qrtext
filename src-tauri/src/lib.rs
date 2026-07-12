@@ -1,5 +1,6 @@
 use std::process::Command;
 use std::time::Duration;
+use tauri::menu::{MenuBuilder, SubmenuBuilder};
 
 /// 调用系统原生截图工具，截取到剪贴板后由前端读取
 #[tauri::command]
@@ -98,6 +99,40 @@ pub fn run() {
             .build(),
         )?;
       }
+
+      // ── 自定义菜单栏 ──
+      let app_menu = SubmenuBuilder::new(app, "QRTEXT")
+        .about(None)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .quit()
+        .build()?;
+
+      let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+
+      let window_menu = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .fullscreen()
+        .build()?;
+
+      let menu = MenuBuilder::new(app)
+        .item(&app_menu)
+        .item(&edit_menu)
+        .item(&window_menu)
+        .build()?;
+
+      app.set_menu(menu)?;
+
       Ok(())
     })
     .run(tauri::generate_context!())

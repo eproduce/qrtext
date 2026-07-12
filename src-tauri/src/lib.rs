@@ -1,6 +1,6 @@
 use std::process::Command;
 use std::time::Duration;
-use tauri::menu::{MenuBuilder, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
 
 /// 调用系统原生截图工具，截取到剪贴板后由前端读取
 #[tauri::command]
@@ -100,9 +100,12 @@ pub fn run() {
         )?;
       }
 
-      // ── 自定义菜单栏 ──
+      // ── 自定义菜单栏（中文） ──
+      let about_item = MenuItemBuilder::with_id("about", "关于 QRTEXT")
+        .build(app)?;
+
       let app_menu = SubmenuBuilder::new(app, "QRTEXT")
-        .about(None)
+        .item(&about_item)
         .separator()
         .services()
         .separator()
@@ -110,7 +113,7 @@ pub fn run() {
         .quit()
         .build()?;
 
-      let edit_menu = SubmenuBuilder::new(app, "Edit")
+      let edit_menu = SubmenuBuilder::new(app, "编辑")
         .undo()
         .redo()
         .separator()
@@ -120,7 +123,7 @@ pub fn run() {
         .select_all()
         .build()?;
 
-      let window_menu = SubmenuBuilder::new(app, "Window")
+      let window_menu = SubmenuBuilder::new(app, "窗口")
         .minimize()
         .fullscreen()
         .build()?;

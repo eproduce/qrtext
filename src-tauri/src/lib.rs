@@ -1,73 +1,23 @@
-use std::process::Command;
-use std::time::Duration;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
 use tauri::{Emitter, Manager};
 
-/// 调用系统原生截图工具，截取到剪贴板后由前端读取
+/// 纯 Rust 跨平台全屏截图（基于 screenshots）
 #[tauri::command]
 fn take_screenshot() -> Result<String, String> {
-  #[cfg(target_os = "macos")]
-  {
-    // screencapture -c: 截取到剪贴板  -i: 交互式框选
-    let status = Command::new("screencapture")
-      .args(["-i", "-c"])
-      .status()
-      .map_err(|e| format!("无法启动截图: {e}"))?;
+  let screens = screenshots::Screen::all()
+    .map_err(|e| format!("无法获取显示器: {e}"))?;
 
-    if !status.success() {
-      return Err("截图已取消".into());
-    }
-    // 等待剪贴板写入完成
-    std::thread::sleep(Duration::from_millis(300));
-  }
+  let path = std::env::temp_dir().join("qrtext_screenshot.png");
 
-  #[cfg(target_os = "linux")]
-  {
-    let tools: &[(&str, &[&str])] = &[
-      ("gnome-screenshot", &["-a", "-c"]),
-      ("spectacle", &["-b", "-n", "-c"]),
-      ("xfce4-screenshooter", &["-r", "-c"]),
-      ("ksnip", &["-r"]),
-    ];
+  screens
+    .first()
+    .ok_or("未检测到显示器")?
+    .capture()
+    .map_err(|e| format!("截图失败: {e}"))?
+    .save(&path)
+    .map_err(|e| format!("保存截图失败: {e}"))?;
 
-    for (tool, args) in tools {
-      if let Ok(status) = Command::new(tool).args(*args).status() {
-        if status.success() {
-          std::thread::sleep(Duration::from_millis(500));
-          return Ok("ok".into());
-        }
-      }
-    }
-
-    // 回退：import + xclip
-    let path = std::env::temp_dir().join("qrtext_screenshot.png");
-    if Command::new("import").arg(&path).status().map(|s| s.success()).unwrap_or(false) {
-      let _ = Command::new("xclip")
-        .args(["-selection", "clipboard", "-t", "image/png", "-i"])
-        .arg(&path)
-        .status();
-      std::thread::sleep(Duration::from_millis(300));
-      return Ok("ok".into());
-    }
-
-    return Err("未找到截图工具。请安装 gnome-screenshot、spectacle 或 ksnip".into());
-  }
-
-  #[cfg(target_os = "windows")]
-  {
-    let status = Command::new("cmd")
-      .args(["/c", "start", "ms-screenclip:"])
-      .status();
-
-    if status.is_err() {
-      return Err("无法启动截图工具，请使用 Win+Shift+S 截图后粘贴".into());
-    }
-    std::thread::sleep(Duration::from_millis(500));
-    Ok("ok".into())
-  }
-
-  #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-  Ok("ok".into())
+  Ok(path.to_string_lossy().to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

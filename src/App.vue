@@ -129,37 +129,18 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
-// ── 解码：系统截图 ──
+// ── 解码：纯 Rust 全屏截图 ──
 async function takeScreenshot() {
   try {
-    // 调用系统截图工具，截图到剪贴板
-    await invoke<string>('take_screenshot')
-    // 截图成功后从剪贴板读取图片
-    await readFromClipboard()
+    const path = await invoke<string>('take_screenshot')
+    // 通过 fetch 读取本地文件
+    const response = await fetch(`file://${path}`)
+    const blob = await response.blob()
+    const file = new File([blob], 'screenshot.png', { type: 'image/png' })
+    processImage(file)
   } catch (err) {
-    if (String(err).includes('已取消')) return
-    // 其他错误：仍然尝试读取剪贴板（用户可能手动截了）
-    console.error('截图命令失败:', err)
-    await readFromClipboard()
-  }
-}
-
-// ── 解码：从剪贴板读取截图（回退方案）─
-async function readFromClipboard() {
-  try {
-    const items = await navigator.clipboard.read()
-    for (const item of items) {
-      const imageTypes = item.types.filter(t => t.startsWith('image/'))
-      if (imageTypes.length > 0) {
-        const blob = await item.getType(imageTypes[0])
-        const file = new File([blob], 'screenshot.png', { type: imageTypes[0] })
-        processImage(file)
-        return
-      }
-    }
-    showToast('剪贴板中没有图片，请先截图')
-  } catch {
-    showToast('无法读取剪贴板，请尝试 Ctrl+V 粘贴')
+    console.error('截图失败:', err)
+    showToast('截图失败，请检查屏幕权限')
   }
 }
 

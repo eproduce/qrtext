@@ -87,13 +87,21 @@ pub fn run() {
       let about_item = MenuItemBuilder::with_id("about", "关于 QRTEXT")
         .build(app)?;
 
+      let hide_item = MenuItemBuilder::with_id("hide_app", "隐藏 QRTEXT")
+        .accelerator("CmdOrCtrl+H")
+        .build(app)?;
+
+      let quit_item = MenuItemBuilder::with_id("quit_app", "退出 QRTEXT")
+        .accelerator("CmdOrCtrl+Q")
+        .build(app)?;
+
       let app_menu = SubmenuBuilder::new(app, "QRTEXT")
         .item(&about_item)
         .separator()
         .services()
         .separator()
-        .hide()
-        .quit()
+        .item(&hide_item)
+        .item(&quit_item)
         .build()?;
 
       // 编辑菜单 — 自定义中文标签 + 标准快捷键
@@ -167,6 +175,12 @@ pub fn run() {
               let is_full = w.is_fullscreen().unwrap_or(false);
               let _ = w.set_fullscreen(!is_full);
             }
+          }
+          "hide_app" => {
+            let _ = app.get_webview_window("main").map(|w| w.hide());
+          }
+          "quit_app" => {
+            app.exit(0);
           }
           _ => {}
         }

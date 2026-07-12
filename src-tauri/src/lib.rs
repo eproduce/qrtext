@@ -1,7 +1,7 @@
 use std::process::Command;
 use std::time::Duration;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 /// 调用系统原生截图工具，截取到剪贴板后由前端读取
 #[tauri::command]
@@ -132,8 +132,16 @@ pub fn run() {
         .build()?;
 
       let window_menu = SubmenuBuilder::new(app, "窗口")
-        .minimize()
-        .fullscreen()
+        .item(
+          &MenuItemBuilder::with_id("minimize", "最小化")
+            .accelerator("CmdOrCtrl+M")
+            .build(app)?,
+        )
+        .item(
+          &MenuItemBuilder::with_id("fullscreen", "进入全屏")
+            .accelerator("CmdOrCtrl+Control+F")
+            .build(app)?,
+        )
         .build()?;
 
       let menu = MenuBuilder::new(app)
@@ -144,11 +152,23 @@ pub fn run() {
 
       app.set_menu(menu)?;
 
-      // ── 关于弹窗 ──
+      // ── 菜单事件：关于 / 窗口操作 ──
       let handle = app.handle().clone();
-      app.on_menu_event(move |_app, event| {
-        if event.id() == "about" {
-          let _ = handle.emit("show-about", ());
+      app.on_menu_event(move |app, event| {
+        match event.id().0.as_str() {
+          "about" => {
+            let _ = handle.emit("show-about", ());
+          }
+          "minimize" => {
+            let _ = app.get_webview_window("main").map(|w| w.minimize());
+          }
+          "fullscreen" => {
+            if let Some(w) = app.get_webview_window("main") {
+              let is_full = w.is_fullscreen().unwrap_or(false);
+              let _ = w.set_fullscreen(!is_full);
+            }
+          }
+          _ => {}
         }
       });
 

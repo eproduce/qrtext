@@ -1,52 +1,74 @@
 use std::process::Command;
-use std::time::Duration;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
 use tauri::{Emitter, Manager};
 
-/// 调用系统截图工具，框选区域截图到剪贴板
+/// 调用系统截图工具框选区域，保存到临时文件
 #[tauri::command]
 fn take_screenshot() -> Result<String, String> {
+  let path = std::env::temp_dir().join("qrtext_screenshot.png");
+
   #[cfg(target_os = "macos")]
   {
     let status = Command::new("screencapture")
-      .args(["-i", "-c"])
+      .args(["-i", "-x"])
+      .arg(&path)
       .status()
       .map_err(|e| format!("无法启动截图: {e}"))?;
     if !status.success() {
       return Err("截图已取消".into());
     }
-    std::thread::sleep(Duration::from_millis(300));
   }
 
   #[cfg(target_os = "linux")]
   {
     let tools: &[(&str, &[&str])] = &[
-      ("gnome-screenshot", &["-a", "-c"]),
-      ("spectacle", &["-b", "-n", "-c"]),
-      ("xfce4-screenshooter", &["-r", "-c"]),
-      ("ksnip", &["-r"]),
+      ("gnome-screenshot", &["-a", "-f"]),
+      ("spectacle", &["-b", "-n", "-o"]),
+      ("xfce4-screenshooter", &["-r", "-s"]),
+      ("ksnip", &["-r", "-s"]),
     ];
+    let mut ok = false;
     for (tool, args) in tools {
-      if let Ok(status) = Command::new(tool).args(*args).status() {
+      if let Ok(status) = Command::new(tool).args(*args).arg(&path).status() {
         if status.success() {
-          std::thread::sleep(Duration::from_millis(500));
-          return Ok("ok".into());
+          ok = true;
+          break;
         }
       }
     }
-    return Err("未找到截图工具".into());
+    if !ok {
+      return Err("未找到截图工具或截图被取消".into());
+    }
   }
 
   #[cfg(target_os = "windows")]
   {
     Command::new("cmd")
-      .args(["/c", "start", "ms-screenclip:"])
+      .args(["/c", "start", "/wait", "ms-screenclip:"])
       .status()
       .map_err(|_| "无法启动截图工具".to_string())?;
-    std::thread::sleep(Duration::from_millis(500));
+
+    // Windows: ms-screenclip 截图到剪贴板，用 PowerShell 保存
+    let ps = r#"
+Add-Type -AssemblyName System.Windows.Forms
+if ([Windows.Forms.Clipboard]::ContainsImage()) {
+  $img = [Windows.Forms.Clipboard]::GetImage()
+  $img.Save($env:TEMP + '\qrtext_screenshot.png', [System.Drawing.Imaging.ImageFormat]::Png)
+  Write-Output 'ok'
+} else {
+  Write-Output 'no_image'
+}
+"#;
+    let output = Command::new("powershell")
+      .args(["-Command", ps])
+      .output()
+      .map_err(|e| format!("PowerShell 执行失败: {e}"))?;
+    if !String::from_utf8_lossy(&output.stdout).contains("ok") {
+      return Err("剪贴板中无图片".into());
+    }
   }
 
-  Ok("ok".into())
+  Ok(path.to_string_lossy().to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

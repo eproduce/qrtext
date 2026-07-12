@@ -129,18 +129,24 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
-// ── 解码：纯 Rust 全屏截图 ──
+// ── 解码：系统框选截图 ──
 async function takeScreenshot() {
   try {
-    const path = await invoke<string>('take_screenshot')
-    // 通过 fetch 读取本地文件
-    const response = await fetch(`file://${path}`)
-    const blob = await response.blob()
-    const file = new File([blob], 'screenshot.png', { type: 'image/png' })
-    processImage(file)
-  } catch (err) {
-    console.error('截图失败:', err)
-    showToast('截图失败，请检查屏幕权限')
+    await invoke('take_screenshot')
+    // 系统截图写入剪贴板后读取
+    const items = await navigator.clipboard.read()
+    for (const item of items) {
+      const imageTypes = item.types.filter((t: string) => t.startsWith('image/'))
+      if (imageTypes.length > 0) {
+        const blob = await item.getType(imageTypes[0])
+        const file = new File([blob], 'screenshot.png', { type: imageTypes[0] })
+        processImage(file)
+        return
+      }
+    }
+    showToast('剪贴板中没有图片')
+  } catch {
+    showToast('截图失败或已取消')
   }
 }
 

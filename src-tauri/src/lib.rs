@@ -1,53 +1,52 @@
 use std::process::Command;
+use std::time::Duration;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
 use tauri::{Emitter, Manager};
 
-/// 截图：优先 Rust 全屏捕获，macOS 无权限时回退 screencapture
+/// 调用系统截图工具，框选区域截图到剪贴板
 #[tauri::command]
 fn take_screenshot() -> Result<String, String> {
-  let path = std::env::temp_dir().join("qrtext_screenshot.png");
-
-  // 尝试纯 Rust 截图
-  if let Ok(screens) = screenshots::Screen::all() {
-    if let Some(screen) = screens.first() {
-      if let Ok(image) = screen.capture() {
-        if image.save(&path).is_ok() {
-          return Ok(path.to_string_lossy().to_string());
-        }
-      }
-    }
-  }
-
-  // macOS 回退：使用 screencapture（无需屏幕录制权限）
   #[cfg(target_os = "macos")]
   {
     let status = Command::new("screencapture")
-      .args(["-x", "-C"])
-      .arg(&path)
+      .args(["-i", "-c"])
       .status()
-      .map_err(|e| format!("截图失败: {e}"))?;
-    if status.success() {
-      return Ok(path.to_string_lossy().to_string());
+      .map_err(|e| format!("无法启动截图: {e}"))?;
+    if !status.success() {
+      return Err("截图已取消".into());
     }
+    std::thread::sleep(Duration::from_millis(300));
   }
 
-  // Linux 回退
   #[cfg(target_os = "linux")]
   {
-    for (tool, args) in &[
-      ("gnome-screenshot", &["-f"][..]),
-      ("spectacle", &["-b", "-n", "-o"]),
-      ("import", &[][..]),
-    ] {
-      if let Ok(status) = Command::new(tool).args(*args).arg(&path).status() {
+    let tools: &[(&str, &[&str])] = &[
+      ("gnome-screenshot", &["-a", "-c"]),
+      ("spectacle", &["-b", "-n", "-c"]),
+      ("xfce4-screenshooter", &["-r", "-c"]),
+      ("ksnip", &["-r"]),
+    ];
+    for (tool, args) in tools {
+      if let Ok(status) = Command::new(tool).args(*args).status() {
         if status.success() {
-          return Ok(path.to_string_lossy().to_string());
+          std::thread::sleep(Duration::from_millis(500));
+          return Ok("ok".into());
         }
       }
     }
+    return Err("未找到截图工具".into());
   }
 
-  Err("截图失败，请检查屏幕录制权限".into())
+  #[cfg(target_os = "windows")]
+  {
+    Command::new("cmd")
+      .args(["/c", "start", "ms-screenclip:"])
+      .status()
+      .map_err(|_| "无法启动截图工具".to_string())?;
+    std::thread::sleep(Duration::from_millis(500));
+  }
+
+  Ok("ok".into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -67,7 +67,19 @@ Push 到 `main` 分支后，GitHub Actions 自动构建三平台包：
 
 构建产物可在 [Actions](https://github.com/eproduce/qrtext/actions) 页面的 Artifacts 中下载。
 
-## 📄 License
+## � 版本
+
+当前版本：**0.1.0**
+
+版本变更记录请查看 [CHANGELOG.md](./CHANGELOG.md)。
+
+升级版本号：
+
+```bash
+npm run bump-version 0.2.0
+```
+
+## �📄 License
 
 MIT
 

@@ -5,6 +5,9 @@ import jsQR from 'jsqr'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
+declare const __APP_VERSION__: string
+const version = __APP_VERSION__
+
 // ── 关于弹窗 ──
 const showAbout = ref(false)
 onMounted(() => {
@@ -416,7 +419,7 @@ const showDownload = computed(() => !!qrDataUrl.value)
             </svg>
           </div>
           <h2 class="about-title">QRTEXT</h2>
-          <p class="about-version">版本 0.1.0</p>
+          <p class="about-version">版本 {{ version }}</p>
           <p class="about-desc">跨平台二维码识别与生成工具</p>
           <p class="about-tech">Tauri 2 · Vue 3 · Rust</p>
           <button class="btn-primary about-close" @click="showAbout = false">确定</button>

@@ -1,6 +1,7 @@
 use std::process::Command;
 use std::time::Duration;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
+use tauri::Emitter;
 
 /// 调用系统原生截图工具，截取到剪贴板后由前端读取
 #[tauri::command]
@@ -82,7 +83,7 @@ pub fn run() {
         )?;
       }
 
-      // ── 自定义菜单栏（中文） ──
+      // ── 自定义菜单栏（中文标签 + 快捷键） ──
       let about_item = MenuItemBuilder::with_id("about", "关于 QRTEXT")
         .build(app)?;
 
@@ -95,14 +96,39 @@ pub fn run() {
         .quit()
         .build()?;
 
+      // 编辑菜单 — 自定义中文标签 + 标准快捷键
       let edit_menu = SubmenuBuilder::new(app, "编辑")
-        .undo()
-        .redo()
+        .item(
+          &MenuItemBuilder::with_id("undo", "撤销")
+            .accelerator("CmdOrCtrl+Z")
+            .build(app)?,
+        )
+        .item(
+          &MenuItemBuilder::with_id("redo", "重做")
+            .accelerator("CmdOrCtrl+Shift+Z")
+            .build(app)?,
+        )
         .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
+        .item(
+          &MenuItemBuilder::with_id("cut", "剪切")
+            .accelerator("CmdOrCtrl+X")
+            .build(app)?,
+        )
+        .item(
+          &MenuItemBuilder::with_id("copy", "拷贝")
+            .accelerator("CmdOrCtrl+C")
+            .build(app)?,
+        )
+        .item(
+          &MenuItemBuilder::with_id("paste", "粘贴")
+            .accelerator("CmdOrCtrl+V")
+            .build(app)?,
+        )
+        .item(
+          &MenuItemBuilder::with_id("select_all", "全选")
+            .accelerator("CmdOrCtrl+A")
+            .build(app)?,
+        )
         .build()?;
 
       let window_menu = SubmenuBuilder::new(app, "窗口")
@@ -117,6 +143,14 @@ pub fn run() {
         .build()?;
 
       app.set_menu(menu)?;
+
+      // ── 关于弹窗 ──
+      let handle = app.handle().clone();
+      app.on_menu_event(move |_app, event| {
+        if event.id() == "about" {
+          let _ = handle.emit("show-about", ());
+        }
+      });
 
       Ok(())
     })

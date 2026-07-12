@@ -1,8 +1,17 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import QRCode from 'qrcode'
 import jsQR from 'jsqr'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+
+// ── 关于弹窗 ──
+const showAbout = ref(false)
+onMounted(() => {
+  listen('show-about', () => {
+    showAbout.value = true
+  })
+})
 
 // ── 标签页 ──
 type Tab = 'decode' | 'encode'
@@ -390,6 +399,30 @@ const showDownload = computed(() => !!qrDataUrl.value)
         </div>
       </section>
     </main>
+
+    <!-- 关于弹窗 -->
+    <Transition name="modal">
+      <div v-if="showAbout" class="about-overlay" @click.self="showAbout = false">
+        <div class="about-card">
+          <div class="about-icon">
+            <svg viewBox="0 0 32 32" width="56" height="56">
+              <rect width="32" height="32" rx="7" fill="#1A1A2E"/>
+              <rect x="5" y="5" width="6" height="6" rx="1.5" fill="none" stroke="#fff" stroke-width="1.2" opacity="0.9"/>
+              <rect x="7" y="7" width="2.5" height="2.5" rx="0.5" fill="#4FACFE"/>
+              <rect x="21" y="5" width="6" height="6" rx="1.5" fill="none" stroke="#fff" stroke-width="1.2" opacity="0.9"/>
+              <rect x="23" y="7" width="2.5" height="2.5" rx="0.5" fill="#4FACFE"/>
+              <rect x="5" y="21" width="6" height="6" rx="1.5" fill="none" stroke="#fff" stroke-width="1.2" opacity="0.9"/>
+              <rect x="7" y="23" width="2.5" height="2.5" rx="0.5" fill="#4FACFE"/>
+            </svg>
+          </div>
+          <h2 class="about-title">QRTEXT</h2>
+          <p class="about-version">版本 0.1.0</p>
+          <p class="about-desc">跨平台二维码识别与生成工具</p>
+          <p class="about-tech">Tauri 2 · Vue 3 · Rust</p>
+          <button class="btn-primary about-close" @click="showAbout = false">确定</button>
+        </div>
+      </div>
+    </Transition>
 
     <!-- Toast -->
     <Transition name="toast">
@@ -830,6 +863,79 @@ const showDownload = computed(() => !!qrDataUrl.value)
 .toast-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(8px);
+}
+
+/* ── 关于弹窗 ── */
+.about-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.about-card {
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 36px 40px;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.16);
+  max-width: 320px;
+  width: 90%;
+}
+
+.about-icon {
+  margin-bottom: 12px;
+}
+
+.about-title {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  margin-bottom: 4px;
+}
+
+.about-version {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.about-desc {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.about-tech {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}
+
+.about-close {
+  width: 100%;
+}
+
+.modal-enter-active,
+.modal-leave-active {
+  transition: all 0.2s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .about-card {
+  transform: scale(0.9);
+}
+
+.modal-leave-to .about-card {
+  transform: scale(0.9);
 }
 </style>
 

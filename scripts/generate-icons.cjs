@@ -1,0 +1,77 @@
+const sharp = require('sharp')
+const { execSync } = require('child_process')
+const path = require('path')
+const fs = require('fs')
+
+const ICONS_DIR = path.join(__dirname, '..', 'src-tauri', 'icons')
+const SVG = path.join(ICONS_DIR, 'icon.svg')
+
+async function generate() {
+  // ── PNG 文件 ──
+  const pngSizes = [
+    { file: '32x32.png', size: 32 },
+    { file: '128x128.png', size: 128 },
+    { file: '128x128@2x.png', size: 256 },
+    { file: 'icon.png', size: 512 },
+    { file: 'Square30x30Logo.png', size: 30 },
+    { file: 'Square44x44Logo.png', size: 44 },
+    { file: 'Square71x71Logo.png', size: 71 },
+    { file: 'Square89x89Logo.png', size: 89 },
+    { file: 'Square107x107Logo.png', size: 107 },
+    { file: 'Square142x142Logo.png', size: 142 },
+    { file: 'Square150x150Logo.png', size: 150 },
+    { file: 'Square284x284Logo.png', size: 284 },
+    { file: 'Square310x310Logo.png', size: 310 },
+    { file: 'StoreLogo.png', size: 50 },
+  ]
+
+  for (const { file, size } of pngSizes) {
+    await sharp(SVG)
+      .resize(size, size)
+      .png()
+      .toFile(path.join(ICONS_DIR, file))
+    console.log(`  ✓ ${file} (${size}×${size})`)
+  }
+
+  // ── ICO (Windows) ──
+  console.log('  Generating icon.ico ...')
+  const png256 = path.join(ICONS_DIR, 'icon.png')
+  try {
+    execSync(`magick ${png256} -define icon:auto-resize=256,128,64,48,32,16 ${path.join(ICONS_DIR, 'icon.ico')}`, { stdio: 'pipe' })
+    console.log('  ✓ icon.ico')
+  } catch {
+    try {
+      execSync(`convert ${png256} ${path.join(ICONS_DIR, 'icon.ico')}`, { stdio: 'pipe' })
+      console.log('  ✓ icon.ico (convert)')
+    } catch {
+      console.log('  ⚠ imagemagick not found, copying png as ico fallback')
+      fs.copyFileSync(png256, path.join(ICONS_DIR, 'icon.ico'))
+    }
+  }
+
+  // ── ICNS (macOS) ──
+  console.log('  Generating icon.icns ...')
+  const iconset = path.join(ICONS_DIR, 'icon.iconset')
+  fs.mkdirSync(iconset, { recursive: true })
+
+  const sizes = [16, 32, 64, 128, 256, 512]
+  for (const s of sizes) {
+    const out = path.join(iconset, `icon_${s}x${s}.png`)
+    await sharp(SVG).resize(s, s).png().toFile(out)
+    const out2x = path.join(iconset, `icon_${s}x${s}@2x.png`)
+    await sharp(SVG).resize(s * 2, s * 2).png().toFile(out2x)
+  }
+
+  try {
+    execSync(`iconutil -c icns ${iconset} -o ${path.join(ICONS_DIR, 'icon.icns')}`, { stdio: 'pipe' })
+    console.log('  ✓ icon.icns')
+  } catch {
+    console.log('  ⚠ iconutil unavailable, using png fallback')
+    fs.copyFileSync(path.join(ICONS_DIR, 'icon.png'), path.join(ICONS_DIR, 'icon.icns'))
+  }
+
+  fs.rmSync(iconset, { recursive: true, force: true })
+  console.log('\n🎨 All icons generated!')
+}
+
+generate().catch(console.error)

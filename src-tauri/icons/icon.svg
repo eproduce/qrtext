@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0071E3"/>
+      <stop offset="100%" stop-color="#005BB5"/>
+    </linearGradient>
+  </defs>
+  <!-- 背景圆角矩形 -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#bg)"/>
+  <!-- QR 角落方块：左上 -->
+  <rect x="108" y="108" width="88" height="88" rx="16" fill="white" opacity="0.95"/>
+  <rect x="124" y="124" width="56" height="56" rx="8" fill="#0071E3"/>
+  <!-- QR 角落方块：右上 -->
+  <rect x="316" y="108" width="88" height="88" rx="16" fill="white" opacity="0.95"/>
+  <rect x="332" y="124" width="56" height="56" rx="8" fill="#0071E3"/>
+  <!-- QR 角落方块：左下 -->
+  <rect x="108" y="316" width="88" height="88" rx="16" fill="white" opacity="0.95"/>
+  <rect x="124" y="332" width="56" height="56" rx="8" fill="#0071E3"/>
+  <!-- 中心 T 字母 -->
+  <rect x="236" y="316" width="40" height="88" rx="4" fill="white" opacity="0.9"/>
+  <rect x="216" y="332" width="80" height="24" rx="4" fill="white" opacity="0.9"/>
+</svg>

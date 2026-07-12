@@ -31,7 +31,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 // ── 编码 ──
 const encodeText = ref('')
 const qrDataUrl = ref('')
-const qrSize = ref(280)
+const qrSize = ref(360)
 const qrError = ref('')
 
 // ── 通知 ──
@@ -179,7 +179,6 @@ async function generateQR(text: string) {
       margin: 2,
       color: { dark: '#1d1d1f', light: '#ffffff' },
       errorCorrectionLevel: 'L',
-      version: 40,
     })
     qrError.value = ''
   } catch {

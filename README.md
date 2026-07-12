@@ -12,15 +12,7 @@
 | 🧬 **生成二维码** | 输入文本实时预览，一键下载 PNG |
 | 🌍 **跨平台** | macOS / Windows / Linux 全平台原生体验 |
 
-## 🖼️ 预览
-
-<p align="center">
-  <img src="https://github.com/eproduce/qrtext/raw/main/screenshots/decode.png" width="45%" alt="识别" />
-  &nbsp;&nbsp;
-  <img src="https://github.com/eproduce/qrtext/raw/main/screenshots/encode.png" width="45%" alt="生成" />
-</p>
-
-## 🛠️ 技术栈
+## ️ 技术栈
 
 | 层 | 技术 |
 |----|------|

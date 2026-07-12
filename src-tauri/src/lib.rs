@@ -22,13 +22,11 @@ fn take_screenshot() -> Result<String, String> {
 
   #[cfg(target_os = "linux")]
   {
-    // 依次尝试 Linux 截图工具（-c 表示复制到剪贴板）
     let tools: &[(&str, &[&str])] = &[
       ("gnome-screenshot", &["-a", "-c"]),
       ("spectacle", &["-b", "-n", "-c"]),
       ("xfce4-screenshooter", &["-r", "-c"]),
-      ("grim", &["-g", "-"]),  // wlroots: grim -g "$(slurp -d)" -
-      ("ksnip", &["-r"]),      // 需要 -s 保存到文件
+      ("ksnip", &["-r"]),
     ];
 
     for (tool, args) in tools {
@@ -40,15 +38,9 @@ fn take_screenshot() -> Result<String, String> {
       }
     }
 
-    // 回退：如果都不行，尝试用 import + xclip
+    // 回退：import + xclip
     let path = std::env::temp_dir().join("qrtext_screenshot.png");
-    let import_ok = Command::new("import")
-      .arg(&path)
-      .status()
-      .map(|s| s.success())
-      .unwrap_or(false);
-
-    if import_ok {
+    if Command::new("import").arg(&path).status().map(|s| s.success()).unwrap_or(false) {
       let _ = Command::new("xclip")
         .args(["-selection", "clipboard", "-t", "image/png", "-i"])
         .arg(&path)
@@ -62,16 +54,6 @@ fn take_screenshot() -> Result<String, String> {
 
   #[cfg(target_os = "windows")]
   {
-    // 使用 PowerShell 调用 Win+Shift+S 截图快捷键
-    // 或者启动截图工具并等待
-    let script = r#"
-Add-Type -AssemblyName System.Windows.Forms
-# 模拟 Win+Shift+S
-[System.Windows.Forms.SendKeys]::SendWait("^+{S}")
-"#;
-
-    // 更可靠的方式：直接调用 Windows 截图 API
-    // 使用 ms-screenclip: URI 启动截图工具
     let status = Command::new("cmd")
       .args(["/c", "start", "ms-screenclip:"])
       .status();
@@ -79,11 +61,11 @@ Add-Type -AssemblyName System.Windows.Forms
     if status.is_err() {
       return Err("无法启动截图工具，请使用 Win+Shift+S 截图后粘贴".into());
     }
-
-    // 等待用户完成截图并写入剪贴板
     std::thread::sleep(Duration::from_millis(500));
+    Ok("ok".into())
   }
 
+  #[cfg(not(any(target_os = "linux", target_os = "windows")))]
   Ok("ok".into())
 }
 

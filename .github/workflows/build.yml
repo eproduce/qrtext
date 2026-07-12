@@ -31,7 +31,10 @@ jobs:
       - run: npm ci
 
       - name: Build
-        run: npx tauri build --bundles deb,appimage
+        run: npm run tauri:build -- --bundles deb,appimage
+
+      - name: Debug — list bundle output
+        run: find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No bundle output found"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -55,7 +58,10 @@ jobs:
       - run: npm ci
 
       - name: Build
-        run: npx tauri build --bundles dmg
+        run: npm run tauri:build -- --bundles dmg
+
+      - name: Debug — list bundle output
+        run: find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No bundle output found"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -77,7 +83,11 @@ jobs:
       - run: npm ci
 
       - name: Build
-        run: npx tauri build --bundles msi
+        run: npm run tauri:build -- --bundles msi
+
+      - name: Debug — list bundle output
+        shell: pwsh
+        run: Get-ChildItem -Recurse src-tauri/target/release/bundle -File 2>$null || Write-Host "No bundle output found"
 
       - uses: actions/upload-artifact@v4
         with:

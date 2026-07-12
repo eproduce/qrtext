@@ -1,7 +1,7 @@
 {
   "name": "qrtext",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,10 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "generate-icons": "node scripts/generate-icons.cjs",
-    "bump-version": "node scripts/bump-version.cjs"
+    "bump-version": "node scripts/bump-version.cjs",
+    "release": "node scripts/release.cjs",
+    "release:minor": "node scripts/release.cjs minor",
+    "release:major": "node scripts/release.cjs major"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

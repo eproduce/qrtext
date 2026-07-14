@@ -14,36 +14,41 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Linux .deb / AppImage（麒麟 SP1 V10 / glibc 2.31 兼容） ──
-  # 在 ubuntu:20.04 容器内构建，确保 glibc ≤ 2.31 兼容老旧系统
+  # ── Linux .deb / AppImage（麒麟 SP1 V10 兼容） ──
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: 构建容器并编译
+      - name: 安装系统依赖
         run: |
-          docker build -t qrtext-ci -f .github/ci.Dockerfile .
-          docker run --rm \
-            -v "${{ github.workspace }}:/app" \
-            qrtext-ci bash -c "
-              set -e
-              echo '=== glibc 版本 ==='
-              ldd --version | head -1
-              echo ''
-              echo '=== 安装 npm 依赖 ==='
-              npm ci
-              echo ''
-              echo '=== 构建前端 ==='
-              npx vite build
-              echo ''
-              echo '=== 构建 Tauri (deb + AppImage) ==='
-              npx tauri build --bundles deb,appimage
-              echo ''
-              echo '=== 检查二进制 glibc 需求 ==='
-              echo 'glibc 最大版本需求:'
-              objdump -T src-tauri/target/release/qrtext | grep -oP 'GLIBC_\K[0-9.]+' | sort -Vu | tail -3 || true
-            "
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libssl-dev patchelf file
+
+      - run: npm ci
+      - run: npx vite build
+
+      - name: 构建 Tauri（deb + AppImage）
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles deb,appimage
+
+      - name: 检查 glibc 兼容性
+        run: |
+          echo "=== glibc 最大版本需求 ==="
+          objdump -T src-tauri/target/release/qrtext 2>/dev/null | \
+            grep -oP 'GLIBC_\K[0-9.]+' | sort -Vu | tail -5 || true
+          echo "=== 动态库依赖 ==="
+          objdump -p src-tauri/target/release/qrtext 2>/dev/null | grep NEEDED || true
 
       - uses: actions/upload-artifact@v4
         with:

@@ -15,95 +15,25 @@ env:
 
 jobs:
   # ── Linux AppImage（麒麟 SP1 V10 / glibc 2.31 兼容） ──
-  # 在 ubuntu:20.04 容器内构建，从国内镜像拉取所有依赖
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: 容器内构建（glibc 2.31 + 国内镜像）
+      - name: 容器内构建
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/app" \
             -w /app \
-            ubuntu:20.04 bash -c '
-              set -e
-              export DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai
+            ubuntu:20.04 /bin/bash /app/.github/docker-build.sh
 
-              # ── 依次尝试多个国内镜像，找到可用的 ──
-              try_mirror() {
-                local name=$1 url=$2 codename=$3
-                echo "→ 尝试 $name ($codename)..."
-                cat > /etc/apt/sources.list << SRCLIST
-              deb [trusted=yes] ${url} ${codename} main restricted universe multiverse
-              deb [trusted=yes] ${url} ${codename}-updates main restricted universe multiverse
-              deb [trusted=yes] ${url} ${codename}-security main restricted universe multiverse
-              SRCLIST
-                apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::AllowInsecureRepositories=true 2>&1 | tail -1
-              }
-
-              # 镜像列表（按优先级排列）
-              MIRRORS="
-              aliyun|http://mirrors.aliyun.com/ubuntu|focal
-              tsinghua|http://mirrors.tuna.tsinghua.edu.cn/ubuntu|focal
-              ustc|http://mirrors.ustc.edu.cn/ubuntu|focal
-              kylin|http://archive.kylinos.cn/kylin/KYLIN-ALL|10.1
-              kylin-focal|http://archive.kylinos.cn/kylin/KYLIN-ALL|focal
-              "
-
-              FOUND=0
-              IFS=$'\''\n'\''
-              for line in $MIRRORS; do
-                [ -z "$line" ] && continue
-                IFS="|" read -r name url code <<< "$line"
-                if try_mirror "$name" "$url" "$code" && apt-cache show libgtk-3-dev >/dev/null 2>&1; then
-                  echo "  ✓ ${name} 可用"
-                  FOUND=1
-                  break
-                fi
-                echo "  ✗ ${name} 不可用"
-              done
-              unset IFS
-
-              if [ "$FOUND" = "0" ]; then
-                echo "所有镜像均不可用！尝试从 Jammy 手动下载依赖..."
-                cat > /etc/apt/sources.list << SRCLIST
-              deb [trusted=yes] http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
-              SRCLIST
-                apt-get update -o Acquire::Check-Valid-Until=false 2>&1 | tail -1
-              fi
-
-              # ── 安装依赖 ──
-              apt-get install -y --no-install-recommends \
-                curl wget ca-certificates build-essential pkg-config \
-                libwebkit2gtk-4.1-dev libgtk-3-dev \
-                libayatana-appindicator3-dev librsvg2-dev \
-                libsoup-3.0-dev libglib2.0-dev libssl-dev \
-                patchelf file 2>&1 | tail -3
-
-              # ── 检查 ──
-              pkg-config --exists webkit2gtk-4.1 || { echo "✗ webkit2gtk-4.1 缺失"; exit 1; }
-              pkg-config --exists libsoup-3.0 || { echo "✗ libsoup-3.0 缺失"; exit 1; }
-              echo "✓ 所有系统依赖就绪"
-              ldd --version | head -1
-
-              # ── Node.js 22 ──
-              curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-              apt-get install -y nodejs
-
-              # ── Rust ──
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-              . /root/.cargo/env
-
-              # ── 构建 ──
-              npm ci
-              npx vite build
-              npx tauri build --bundles deb,appimage
-
-              # ── 验证 glibc ──
-              echo "=== glibc 符号需求 ==="
-              objdump -T src-tauri/target/release/qrtext | grep -oP "GLIBC_\K[0-9.]+" | sort -Vu | tail -5
-            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:

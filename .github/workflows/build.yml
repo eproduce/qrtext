@@ -149,7 +149,7 @@ jobs:
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
-  # ── Windows .msi ──
+  # ── Windows 便携版 .zip ──
   build-windows:
     runs-on: windows-latest
     steps:
@@ -165,44 +165,118 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --bundles msi
+          args: --bundles nsis
+
+      - name: 制作绿色便携版 zip
+        shell: bash
+        run: |
+          # NSIS 安装包可用 7z 解压得到绿色版
+          SETUP=$(ls src-tauri/target/release/bundle/nsis/*_x64-setup.exe 2>/dev/null | head -1)
+          if [ -f "$SETUP" ]; then
+            7z x -oQRTEXT-portable "$SETUP" -y
+            # 删除卸载程序，保留纯运行文件
+            rm -f QRTEXT-portable/uninst.exe QRTEXT-portable/\$PLUGINSDIR -rf
+            7z a QRTEXT-portable.zip QRTEXT-portable/
+            mkdir -p src-tauri/target/release/bundle/zip
+            cp QRTEXT-portable.zip src-tauri/target/release/bundle/zip/
+            echo "✓ 便携版 zip 就绪"
+          else
+            echo "⚠ NSIS 打包失败，回退：直接打包二进制"
+            mkdir -p QRTEXT-portable
+            cp src-tauri/target/release/qrtext.exe QRTEXT-portable/ 2>/dev/null || true
+            7z a QRTEXT-portable.zip QRTEXT-portable/ || true
+            mkdir -p src-tauri/target/release/bundle/zip
+            cp QRTEXT-portable.zip src-tauri/target/release/bundle/zip/ 2>/dev/null || true
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-packages
-          path: src-tauri/target/release/bundle/msi/*.msi
+          path: |
+            src-tauri/target/release/bundle/nsis/*_x64-setup.exe
+            src-tauri/target/release/bundle/zip/*.zip
           if-no-files-found: error
 
-  # ── 发布 Release / Nightly ──
+  # ── 发布 Release ──
   release:
     needs: [build-linux, build-macos, build-windows]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
 
       - uses: actions/download-artifact@v4
         with:
           path: packages
           merge-multiple: true
 
-      - name: Nightly Release（main 分支，每次唯一 tag）
+      # ── main 分支：自动升版号 + CHANGELOG + Release ──
+      - name: 自动升版号 & 生成 CHANGELOG
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: nightly-${{ github.run_number }}-${{ github.run_attempt }}
-          name: Nightly Build #${{ github.run_number }}
-          body: '🚧 麒麟兼容版本 · commit `${{ github.sha }}`'
-          prerelease: true
-          files: packages/**
-          make_latest: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: 版本 Release（v* tag）
-        if: startsWith(github.ref, 'refs/tags/v')
+          # 计算新版本（patch +1）
+          VER=$(node -p "require('./package.json').version")
+          MAJOR=$(echo $VER | cut -d. -f1)
+          MINOR=$(echo $VER | cut -d. -f2)
+          PATCH=$(echo $VER | cut -d. -f3)
+          NEW="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "新版本: v${NEW}"
+
+          # 更新版本号
+          node scripts/bump-version.cjs "$NEW"
+
+          # 生成 CHANGELOG 条目
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          RANGE="${LAST_TAG:+${LAST_TAG}..}HEAD"
+          TODAY=$(date +%Y-%m-%d)
+
+          echo "" >> /tmp/changelog-entry.md
+          echo "## ${NEW} (${TODAY})" >> /tmp/changelog-entry.md
+          echo "" >> /tmp/changelog-entry.md
+          git log ${RANGE} --pretty=format:"- %s" --no-merges >> /tmp/changelog-entry.md 2>/dev/null || echo "- 自动构建" >> /tmp/changelog-entry.md
+          echo "" >> /tmp/changelog-entry.md
+
+          # 插入 CHANGELOG
+          TITLE_END=$(grep -n '^## ' CHANGELOG.md | head -1 | cut -d: -f1)
+          TITLE_END=$((TITLE_END - 1))
+          head -n $TITLE_END CHANGELOG.md > /tmp/new-changelog.md
+          cat /tmp/changelog-entry.md >> /tmp/new-changelog.md
+          tail -n +$((TITLE_END + 1)) CHANGELOG.md >> /tmp/new-changelog.md
+          mv /tmp/new-changelog.md CHANGELOG.md
+
+          # 更新 README 版本号
+          sed -i "s/当前版本：\*\*[0-9.]*\*\*/当前版本：**${NEW}**/" README.md
+
+          # 提交并推送（[skip ci] 防止循环触发）
+          git add package.json src-tauri/tauri.conf.json CHANGELOG.md README.md
+          git commit -m "chore: release v${NEW} [skip ci]" || echo "(无变更)"
+          git push origin main
+
+          # 打 tag 并推送
+          git tag "v${NEW}"
+          git push origin "v${NEW}"
+
+          echo "version=${NEW}" >> $GITHUB_OUTPUT
+        id: bump
+
+      # ── 创建 GitHub Release ──
+      - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.bump.outputs.version && format('v{0}', steps.bump.outputs.version) || github.ref_name }}
+          name: ${{ steps.bump.outputs.version && format('v{0}', steps.bump.outputs.version) || github.ref_name }}
+          body_path: ${{ steps.bump.outcome == 'success' && 'CHANGELOG.md' || '' }}
           files: packages/**
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.bump.outcome != 'success' }}
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -15,27 +15,22 @@ env:
 
 jobs:
   # ── Linux AppImage（麒麟 SP1 V10 / glibc 2.31 完整兼容） ──
-  # 在 ubuntu:20.04 容器内构建，二进制和依赖全部捆绑到 AppImage
+  # 在 Debian Bullseye 容器内构建（glibc 2.31，LTS 至 2026.08）
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: 在 ubuntu:20.04 容器内构建（glibc 2.31）
+      - name: 在 Debian Bullseye 容器内构建（glibc 2.31）
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/app" \
             -w /app \
-            ubuntu:20.04 bash -c '
+            debian:bullseye bash -c '
               set -e
-              export DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai
+              export DEBIAN_FRONTEND=noninteractive
 
-              # ── 修复 EOL apt 源 ──
-              echo "修复 apt 源指向 old-releases..."
-              sed -i "s|http://archive.ubuntu.com|http://old-releases.ubuntu.com|g" /etc/apt/sources.list
-              sed -i "s|http://security.ubuntu.com|http://old-releases.ubuntu.com|g" /etc/apt/sources.list
-
-              # ── 基础工具 ──
+              # ── 基础工具链 ──
               apt-get update
               apt-get install -y --no-install-recommends \
                 curl wget ca-certificates gnupg build-essential pkg-config \
@@ -51,7 +46,7 @@ jobs:
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
               . /root/.cargo/env
 
-              # ── webkit2gtk-4.1 ──
+              # ── webkit2gtk-4.1（Bullseye 可能没有，从 Jammy 拉取） ──
               echo "安装 webkit2gtk-4.1..."
               JWKIT_VER="2.48.1-0ubuntu0.22.04.1"
               BASE="http://archive.ubuntu.com/ubuntu/pool/universe/w/webkit2gtk"
@@ -68,9 +63,9 @@ jobs:
               rm -rf /tmp/*
               cd /app
 
-              # ── 验证 glibc 版本 ──
+              # ── 验证 glibc ──
               echo ""
-              echo "=== 构建环境 glibc ==="
+              echo "=== glibc 版本 ==="
               ldd --version | head -1
 
               # ── 构建 ──
@@ -86,7 +81,7 @@ jobs:
               echo "=== tauri build ==="
               npx tauri build --bundles deb,appimage
 
-              # ── 检查二进制依赖 ──
+              # ── 检查 ──
               echo ""
               echo "=== 二进制 glibc 需求 ==="
               objdump -T src-tauri/target/release/qrtext | grep -oP "GLIBC_\K[0-9.]+" | sort -Vu | tail -5
@@ -95,9 +90,8 @@ jobs:
               objdump -p src-tauri/target/release/qrtext | grep NEEDED
             '
 
-      - name: 检查构建产物
+      - name: 检查产物
         run: |
-          echo "=== 产物列表 ==="
           ls -lh src-tauri/target/release/bundle/deb/ 2>/dev/null || echo "(无 deb)"
           ls -lh src-tauri/target/release/bundle/appimage/ 2>/dev/null || echo "(无 AppImage)"
 

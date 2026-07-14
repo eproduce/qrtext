@@ -14,18 +14,108 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Linux AppImage（麒麟 SP1 V10 / glibc 2.31 兼容） ──
+  # ── Linux AppImage（完全自包含，不依赖系统 glibc/GTK） ──
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: 容器内构建
+      - name: 安装构建依赖
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/app" \
-            -w /app \
-            ubuntu:20.04 /bin/bash /app/.github/docker-build.sh
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libssl-dev patchelf file
+
+      - run: npm ci
+      - run: npx vite build
+
+      - name: 构建 Tauri 二进制
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles deb
+
+      - name: 制作完全自包含 AppImage
+        run: |
+          set -e
+          BIN="src-tauri/target/release/qrtext"
+          APPDIR="/tmp/QRTEXT.AppDir"
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons" "$APPDIR/usr/share/applications"
+
+          cp "$BIN" "$APPDIR/usr/bin/qrtext"
+
+          cat > "$APPDIR/usr/share/applications/qrtext.desktop" << 'DESKEOF'
+          [Desktop Entry]
+          Type=Application
+          Name=QRTEXT
+          Icon=qrtext
+          Exec=qrtext
+          Categories=Utility;
+          DESKEOF
+
+          cp src-tauri/icons/128x128.png "$APPDIR/usr/share/icons/qrtext.png"
+          cp src-tauri/icons/128x128.png "$APPDIR/qrtext.png"
+
+          # AppRun：强制使用 AppImage 内的库，不碰系统库
+          cat > "$APPDIR/AppRun" << 'APPRUN'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "$0")")"
+          export PATH="$HERE/usr/bin:$PATH"
+          export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+          export GTK_PATH="$HERE/usr/lib/x86_64-linux-gnu/gtk-3.0"
+          export GIO_MODULE_DIR="$HERE/usr/lib/x86_64-linux-gnu/gio/modules"
+          export GDK_PIXBUF_MODULE_FILE="$HERE/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          export WEBKIT_DISABLE_COMPOSITING_MODE=1
+          exec "$HERE/usr/bin/qrtext" "$@"
+          APPRUN
+          chmod +x "$APPDIR/AppRun"
+
+          # 安装 linuxdeploy（continuous 版本会自动捆 glibc）
+          wget -qO /usr/local/bin/linuxdeploy \
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          chmod +x /usr/local/bin/linuxdeploy
+
+          # 安装 GTK 插件（自动拉所有 GTK3 依赖）
+          wget -qO /usr/local/bin/linuxdeploy-plugin-gtk.sh \
+            "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
+          chmod +x /usr/local/bin/linuxdeploy-plugin-gtk.sh
+
+          # ── 关键：强制复制 glibc 和 ld-linux 到 AppDir ──
+          # linuxdeploy 默认会跳过这些"基系统"库，我们手动塞进去
+          mkdir -p "$APPDIR/usr/lib"
+          LIBC=$(ldd "$BIN" | grep 'libc\.so\.6' | awk '{print $3}')
+          LD_SO=$(ldd "$BIN" | grep 'ld-linux' | awk '{print $3}')
+          [ -f "$LIBC" ] && cp -L "$LIBC" "$APPDIR/usr/lib/"
+          [ -f "$LD_SO" ] && cp -L "$LD_SO" "$APPDIR/usr/lib/"
+
+          # 运行 linuxdeploy：自动拉所有 NEEDED 库 + GTK 插件
+          cd /tmp
+          DEPLOY_GTK_VERSION=3 linuxdeploy \
+            --appdir "$APPDIR" \
+            --desktop-file "$APPDIR/usr/share/applications/qrtext.desktop" \
+            --icon-file "$APPDIR/usr/share/icons/qrtext.png" \
+            --plugin gtk \
+            --output appimage 2>&1 | tail -15
+
+          # 检查结果
+          APPI=$(ls /tmp/QRTEXT*.AppImage 2>/dev/null | head -1)
+          if [ -n "$APPI" ]; then
+            DEST="$GITHUB_WORKSPACE/src-tauri/target/release/bundle/appimage/"
+            mkdir -p "$DEST"
+            cp "$APPI" "$DEST"
+            ls -lh "$DEST"
+            echo "✓ 自包含 AppImage 就绪（含 glibc + webkit2gtk-4.1 + GTK3）"
+          else
+            echo "⚠ AppImage 生成失败"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

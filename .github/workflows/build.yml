@@ -14,14 +14,14 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Linux AppImage（麒麟 SP1 V10 / glibc 2.31 完整兼容） ──
-  # 在 Debian Bullseye 容器内构建（glibc 2.31，LTS 至 2026.08）
+  # ── Linux AppImage（麒麟 SP1 V10 / glibc 2.31 兼容） ──
+  # 在 ubuntu:20.04 容器内构建，从国内镜像拉取所有依赖
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: 在麒麟兼容环境构建（glibc 2.31）
+      - name: 容器内构建（glibc 2.31 + 国内镜像）
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/app" \
@@ -30,30 +30,62 @@ jobs:
               set -e
               export DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai
 
-              # ── apt 源切到麒麟公网镜像（与麒麟 SP1 V10 完全一致的包） ──
-              echo "切换 apt 源到麒麟镜像..."
-              cat > /etc/apt/sources.list << EOF
-              deb http://archive.kylinos.cn/kylin/KYLIN-ALL 10.1 main restricted universe multiverse
-              deb http://archive.kylinos.cn/kylin/KYLIN-ALL 10.1-updates main restricted universe multiverse
-              deb http://archive.kylinos.cn/kylin/KYLIN-ALL 10.1-security main restricted universe multiverse
-              EOF
-              apt-get update -o Acquire::Check-Valid-Until=false || {
-                echo "麒麟镜像不可用，换阿里云镜像重试..."
-                cat > /etc/apt/sources.list << EOF2
-              deb [trusted=yes] http://mirrors.aliyun.com/ubuntu focal main restricted universe multiverse
-              deb [trusted=yes] http://mirrors.aliyun.com/ubuntu focal-updates main restricted universe multiverse
-              deb [trusted=yes] http://mirrors.aliyun.com/ubuntu focal-security main restricted universe multiverse
-              EOF2
-                apt-get update -o Acquire::Check-Valid-Until=false
+              # ── 依次尝试多个国内镜像，找到可用的 ──
+              try_mirror() {
+                local name=$1 url=$2 codename=$3
+                echo "→ 尝试 $name ($codename)..."
+                cat > /etc/apt/sources.list << SRCLIST
+              deb [trusted=yes] ${url} ${codename} main restricted universe multiverse
+              deb [trusted=yes] ${url} ${codename}-updates main restricted universe multiverse
+              deb [trusted=yes] ${url} ${codename}-security main restricted universe multiverse
+              SRCLIST
+                apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::AllowInsecureRepositories=true 2>&1 | tail -1
               }
 
-              # ── 安装所有依赖（全部来自麒麟/阿里云镜像，版本与 SP1 一致） ──
+              # 镜像列表（按优先级排列）
+              MIRRORS="
+              aliyun|http://mirrors.aliyun.com/ubuntu|focal
+              tsinghua|http://mirrors.tuna.tsinghua.edu.cn/ubuntu|focal
+              ustc|http://mirrors.ustc.edu.cn/ubuntu|focal
+              kylin|http://archive.kylinos.cn/kylin/KYLIN-ALL|10.1
+              kylin-focal|http://archive.kylinos.cn/kylin/KYLIN-ALL|focal
+              "
+
+              FOUND=0
+              IFS=$'\''\n'\''
+              for line in $MIRRORS; do
+                [ -z "$line" ] && continue
+                IFS="|" read -r name url code <<< "$line"
+                if try_mirror "$name" "$url" "$code" && apt-cache show libgtk-3-dev >/dev/null 2>&1; then
+                  echo "  ✓ ${name} 可用"
+                  FOUND=1
+                  break
+                fi
+                echo "  ✗ ${name} 不可用"
+              done
+              unset IFS
+
+              if [ "$FOUND" = "0" ]; then
+                echo "所有镜像均不可用！尝试从 Jammy 手动下载依赖..."
+                cat > /etc/apt/sources.list << SRCLIST
+              deb [trusted=yes] http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+              SRCLIST
+                apt-get update -o Acquire::Check-Valid-Until=false 2>&1 | tail -1
+              fi
+
+              # ── 安装依赖 ──
               apt-get install -y --no-install-recommends \
-                curl wget ca-certificates gnupg build-essential pkg-config \
+                curl wget ca-certificates build-essential pkg-config \
                 libwebkit2gtk-4.1-dev libgtk-3-dev \
                 libayatana-appindicator3-dev librsvg2-dev \
                 libsoup-3.0-dev libglib2.0-dev libssl-dev \
-                patchelf file
+                patchelf file 2>&1 | tail -3
+
+              # ── 检查 ──
+              pkg-config --exists webkit2gtk-4.1 || { echo "✗ webkit2gtk-4.1 缺失"; exit 1; }
+              pkg-config --exists libsoup-3.0 || { echo "✗ libsoup-3.0 缺失"; exit 1; }
+              echo "✓ 所有系统依赖就绪"
+              ldd --version | head -1
 
               # ── Node.js 22 ──
               curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -63,37 +95,15 @@ jobs:
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
               . /root/.cargo/env
 
-              # ── 验证 ──
-              echo ""
-              echo "=== glibc 版本 ==="
-              ldd --version | head -1
-              pkg-config --exists webkit2gtk-4.1 && echo "✓ webkit2gtk-4.1" || { echo "✗ webkit2gtk-4.1"; exit 1; }
-              pkg-config --exists libsoup-3.0 && echo "✓ libsoup-3.0" || echo "⚠ libsoup-3.0 未检测到"
-
               # ── 构建 ──
-              echo ""
-              echo "=== npm ci ==="
               npm ci
-              echo ""
-              echo "=== vite build ==="
               npx vite build
-              echo ""
-              echo "=== tauri build ==="
               npx tauri build --bundles deb,appimage
 
-              # ── 检查 ──
-              echo ""
-              echo "=== 二进制 glibc 需求（必须 ≤ 2.31） ==="
+              # ── 验证 glibc ──
+              echo "=== glibc 符号需求 ==="
               objdump -T src-tauri/target/release/qrtext | grep -oP "GLIBC_\K[0-9.]+" | sort -Vu | tail -5
-              echo ""
-              echo "=== 动态库依赖 ==="
-              objdump -p src-tauri/target/release/qrtext | grep NEEDED
             '
-
-      - name: 检查产物
-        run: |
-          ls -lh src-tauri/target/release/bundle/deb/ 2>/dev/null || echo "(无 deb)"
-          ls -lh src-tauri/target/release/bundle/appimage/ 2>/dev/null || echo "(无 AppImage)"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -103,57 +113,9 @@ jobs:
             src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
-  # ── macOS .dmg ──
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: dtolnay/rust-toolchain@stable
-
-      - run: npm ci
-      - run: npx vite build
-
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: --bundles dmg
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-packages
-          path: src-tauri/target/release/bundle/dmg/*.dmg
-          if-no-files-found: error
-
-  # ── Windows .msi ──
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: dtolnay/rust-toolchain@stable
-
-      - run: npm ci
-      - run: npx vite build
-
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: --bundles msi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-packages
-          path: src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: error
-
   # ── 发布 Release / Nightly ──
   release:
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -168,7 +130,7 @@ jobs:
         with:
           tag_name: nightly
           name: Nightly Build
-          body: '🚧 最新开发版本，自动从 main 分支构建。'
+          body: '🚧 麒麟兼容版本，自动从 main 分支构建。'
           prerelease: true
           files: packages/**
           make_latest: false

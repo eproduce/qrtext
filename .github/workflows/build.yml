@@ -15,50 +15,35 @@ env:
 
 jobs:
   # ── Linux .deb / AppImage（麒麟 SP1 V10 / glibc 2.31 兼容） ──
-  # 使用 ubuntu-20.04 以确保 glibc 版本兼容老旧系统
+  # 在 ubuntu:20.04 容器内构建，确保 glibc ≤ 2.31 兼容老旧系统
   build-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: dtolnay/rust-toolchain@stable
 
-      # 安装系统依赖（含 webkit2gtk-4.1 从 jammy 源获取）
-      - name: 安装构建依赖
+      - name: 构建容器并编译
         run: |
-          sudo apt-get update
-
-          # 基础依赖（focal 自带）
-          sudo apt-get install -y --no-install-recommends \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-            libsoup-3.0-dev libglib2.0-dev libssl-dev \
-            file patchelf wget
-
-          # webkit2gtk-4.1 需要从 jammy 手动拉取
-          # 这些 .deb 的依赖基本满足，通常不需要完整的 jammy 源
-          JWKIT_VER="2.48.1-0ubuntu0.22.04.1"
-          JWKIT_BASE="http://archive.ubuntu.com/ubuntu/pool/universe/w/webkit2gtk"
-          cd /tmp
-          for pkg in \
-            "libjavascriptcoregtk-4.1-0_${JWKIT_VER}_amd64.deb" \
-            "libwebkit2gtk-4.1-0_${JWKIT_VER}_amd64.deb" \
-            "libjavascriptcoregtk-4.1-dev_${JWKIT_VER}_amd64.deb" \
-            "libwebkit2gtk-4.1-dev_${JWKIT_VER}_amd64.deb"; do
-            wget -q "${JWKIT_BASE}/${pkg}" && sudo dpkg -i "$pkg" || echo "跳过 $pkg"
-          done
-          sudo apt-get install -f -y --no-install-recommends
-          pkg-config --exists webkit2gtk-4.1 && echo "✓ webkit2gtk-4.1 OK"
-
-      - run: npm ci
-      - run: npx vite build
-
-      # 使用 tauri-action 构建 deb 和 AppImage
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: --bundles deb,appimage
+          docker build -t qrtext-ci -f .github/ci.Dockerfile .
+          docker run --rm \
+            -v "${{ github.workspace }}:/app" \
+            qrtext-ci bash -c "
+              set -e
+              echo '=== glibc 版本 ==='
+              ldd --version | head -1
+              echo ''
+              echo '=== 安装 npm 依赖 ==='
+              npm ci
+              echo ''
+              echo '=== 构建前端 ==='
+              npx vite build
+              echo ''
+              echo '=== 构建 Tauri (deb + AppImage) ==='
+              npx tauri build --bundles deb,appimage
+              echo ''
+              echo '=== 检查二进制 glibc 需求 ==='
+              echo 'glibc 最大版本需求:'
+              objdump -T src-tauri/target/release/qrtext | grep -oP 'GLIBC_\K[0-9.]+' | sort -Vu | tail -3 || true
+            "
 
       - uses: actions/upload-artifact@v4
         with:

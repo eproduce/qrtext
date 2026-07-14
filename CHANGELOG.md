@@ -1,6 +1,11 @@
 # 版本变更
 
 
+
+## 0.3.7 (2026-07-14)
+
+- macOS: Apple Silicon 交叉编译 x86_64，单 job 双架构
+- macOS 双架构：Apple Silicon + Intel x86_64
 ## 0.3.6 (2026-07-14)
 
 - Windows 改为 NSIS + 便携版 zip；release 自动升版号 + CHANGELOG

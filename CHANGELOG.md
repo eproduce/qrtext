@@ -1,5 +1,11 @@
 # 版本变更
 
+
+## 0.3.6 (2026-07-14)
+
+- Windows 改为 NSIS + 便携版 zip；release 自动升版号 + CHANGELOG
+- 自动版本号：nightly tag 唯一 + 二进制版本带 run_number
+- 恢复 macOS 和 Windows 构建
 ## 0.3.5 (2026-07-12)
 
 ### ✨ 功能

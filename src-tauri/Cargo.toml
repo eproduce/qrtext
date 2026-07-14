@@ -24,3 +24,12 @@ log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 base64 = "0.22"
+
+# ── 针对老旧 Linux（麒麟 SP1 V10）的编译优化 ──
+# 减小二进制体积、降低运行时内存占用
+[profile.release]
+opt-level = "s"       # 优化体积（比 "z" 更稳定）
+lto = true            # 链接时优化，减小体积
+codegen-units = 1     # 单编译单元，更好的内联和优化
+strip = "symbols"     # 去除符号表
+panic = "abort"       # 减小 unwinding 开销

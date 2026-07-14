@@ -33,6 +33,20 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37",
+          "libgtk-3-0 (>= 3.18)",
+          "libayatana-appindicator3-1 | libappindicator3-1",
+          "librsvg2-2",
+          "libsoup-3.0-0 | libsoup2.4-1"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

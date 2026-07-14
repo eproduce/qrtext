@@ -23,16 +23,58 @@ fn take_screenshot() -> Result<String, String> {
   #[cfg(target_os = "linux")]
   {
     let mut ok = false;
-    for (tool, args) in &[
-      ("gnome-screenshot", &["-a", "-f"][..]),
-      ("spectacle", &["-b", "-n", "-o"][..]),
-    ] {
-      if let Ok(status) = Command::new(tool).args(*args).arg(&path).status() {
-        if status.success() { ok = true; break; }
+
+    // 按优先级尝试各种截图工具（含国产系统常见工具）
+    // 每个元素: (命令, 参数列表, 输出文件参数位置)
+    let tools: &[(&str, &[&str])] = &[
+      // 麒麟/优麒麟系统截图
+      ("ukui-screenshot",       &["-a", "-s"]),
+      ("kylin-screenshot",      &["-a"]),
+      // GNOME 系
+      ("gnome-screenshot",      &["-a", "-f"]),
+      // KDE
+      ("spectacle",             &["-b", "-n", "-o"]),
+      // 通用截图工具
+      ("xfce4-screenshooter",   &["-r", "-s"]),
+      ("deepin-screenshot",     &["-r", "-s"]),
+      ("flameshot",             &["gui", "-r"]),
+      // ImageMagick
+      ("import",                &[]),
+      // 轻量截图
+      ("maim",                  &["-s"]),
+      ("scrot",                 &["-s"]),
+    ];
+
+    for (tool, args) in tools {
+      let mut cmd = Command::new(tool);
+      cmd.args(*args);
+      // 大多数工具需要把路径作为最后一个参数
+      if *tool == "import" {
+        cmd.arg(&path);
+      } else if *tool == "flameshot" {
+        cmd.arg("-p").arg(&path);
+      } else if *tool == "ukui-screenshot" {
+        cmd.arg("-o").arg(&path);
+      } else {
+        cmd.arg(&path);
+      }
+      match cmd.status() {
+        Ok(status) if status.success() => {
+          ok = true;
+          // 给截图工具一点时间写入文件
+          std::thread::sleep(std::time::Duration::from_millis(500));
+          break;
+        }
+        Ok(_) => continue, // 工具存在但用户取消了
+        Err(_) => continue, // 工具不存在
       }
     }
+
     if !ok {
-      return Err("未找到截图工具或截图被取消".into());
+      return Err(
+        "未找到截图工具。请安装以下任一工具：\n\
+         flameshot、gnome-screenshot、spectacle、maim、scrot、import (ImageMagick)".into()
+      );
     }
   }
 

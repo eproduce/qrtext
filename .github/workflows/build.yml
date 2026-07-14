@@ -14,41 +14,92 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Linux .deb / AppImage（麒麟 SP1 V10 兼容） ──
+  # ── Linux AppImage（麒麟 SP1 V10 / glibc 2.31 完整兼容） ──
+  # 在 ubuntu:20.04 容器内构建，二进制和依赖全部捆绑到 AppImage
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: dtolnay/rust-toolchain@stable
 
-      - name: 安装系统依赖
+      - name: 在 ubuntu:20.04 容器内构建（glibc 2.31）
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev \
-            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            libssl-dev patchelf file
+          docker run --rm \
+            -v "${{ github.workspace }}:/app" \
+            -w /app \
+            ubuntu:20.04 bash -c '
+              set -e
+              export DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai
 
-      - run: npm ci
-      - run: npx vite build
+              # ── 修复 EOL apt 源 ──
+              echo "修复 apt 源指向 old-releases..."
+              sed -i "s|http://archive.ubuntu.com|http://old-releases.ubuntu.com|g" /etc/apt/sources.list
+              sed -i "s|http://security.ubuntu.com|http://old-releases.ubuntu.com|g" /etc/apt/sources.list
 
-      - name: 构建 Tauri（deb + AppImage）
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: --bundles deb,appimage
+              # ── 基础工具 ──
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                curl wget ca-certificates gnupg build-essential pkg-config \
+                libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+                libsoup-3.0-dev libglib2.0-dev libssl-dev \
+                patchelf file
 
-      - name: 检查 glibc 兼容性
+              # ── Node.js 22 ──
+              curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+              apt-get install -y nodejs
+
+              # ── Rust ──
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+              . /root/.cargo/env
+
+              # ── webkit2gtk-4.1 ──
+              echo "安装 webkit2gtk-4.1..."
+              JWKIT_VER="2.48.1-0ubuntu0.22.04.1"
+              BASE="http://archive.ubuntu.com/ubuntu/pool/universe/w/webkit2gtk"
+              cd /tmp
+              for pkg in \
+                libjavascriptcoregtk-4.1-0_${JWKIT_VER}_amd64.deb \
+                libwebkit2gtk-4.1-0_${JWKIT_VER}_amd64.deb \
+                libjavascriptcoregtk-4.1-dev_${JWKIT_VER}_amd64.deb \
+                libwebkit2gtk-4.1-dev_${JWKIT_VER}_amd64.deb; do
+                wget -q "${BASE}/${pkg}" && dpkg -i "$pkg" 2>/dev/null || echo "  跳过 $pkg"
+              done
+              apt-get install -f -y --no-install-recommends
+              pkg-config --exists webkit2gtk-4.1 && echo "  ✓ webkit2gtk-4.1 OK" || { echo "  ✗ webkit2gtk-4.1 失败"; exit 1; }
+              rm -rf /tmp/*
+              cd /app
+
+              # ── 验证 glibc 版本 ──
+              echo ""
+              echo "=== 构建环境 glibc ==="
+              ldd --version | head -1
+
+              # ── 构建 ──
+              echo ""
+              echo "=== npm ci ==="
+              npm ci
+
+              echo ""
+              echo "=== vite build ==="
+              npx vite build
+
+              echo ""
+              echo "=== tauri build ==="
+              npx tauri build --bundles deb,appimage
+
+              # ── 检查二进制依赖 ──
+              echo ""
+              echo "=== 二进制 glibc 需求 ==="
+              objdump -T src-tauri/target/release/qrtext | grep -oP "GLIBC_\K[0-9.]+" | sort -Vu | tail -5
+              echo ""
+              echo "=== 动态库依赖 ==="
+              objdump -p src-tauri/target/release/qrtext | grep NEEDED
+            '
+
+      - name: 检查构建产物
         run: |
-          echo "=== glibc 最大版本需求 ==="
-          objdump -T src-tauri/target/release/qrtext 2>/dev/null | \
-            grep -oP 'GLIBC_\K[0-9.]+' | sort -Vu | tail -5 || true
-          echo "=== 动态库依赖 ==="
-          objdump -p src-tauri/target/release/qrtext 2>/dev/null | grep NEEDED || true
+          echo "=== 产物列表 ==="
+          ls -lh src-tauri/target/release/bundle/deb/ 2>/dev/null || echo "(无 deb)"
+          ls -lh src-tauri/target/release/bundle/appimage/ 2>/dev/null || echo "(无 AppImage)"
 
       - uses: actions/upload-artifact@v4
         with:

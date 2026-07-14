@@ -23,6 +23,9 @@ jobs:
         with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: 自动设置 nightly 版本号
+        run: node scripts/bump-version.cjs "$(node -p "require('./package.json').version")-nightly.${{ github.run_number }}"
+
       - name: 安装构建依赖
         run: |
           sudo apt-get update
@@ -131,6 +134,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
+      - name: 自动设置 nightly 版本号
+        run: node scripts/bump-version.cjs "$(node -p "require('./package.json').version")-nightly.${{ github.run_number }}"
       - run: npm ci
       - run: npx vite build
       - uses: tauri-apps/tauri-action@v0
@@ -152,6 +157,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
+      - name: 自动设置 nightly 版本号
+        run: node scripts/bump-version.cjs "$(node -p "require('./package.json').version")-nightly.${{ github.run_number }}"
       - run: npm ci
       - run: npx vite build
       - uses: tauri-apps/tauri-action@v0
@@ -171,18 +178,20 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: packages
           merge-multiple: true
 
-      - name: Nightly Release（main 分支）
+      - name: Nightly Release（main 分支，每次唯一 tag）
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: nightly
-          name: Nightly Build
-          body: '🚧 麒麟兼容版本，自动从 main 分支构建。'
+          tag_name: nightly-${{ github.run_number }}-${{ github.run_attempt }}
+          name: Nightly Build #${{ github.run_number }}
+          body: '🚧 麒麟兼容版本 · commit `${{ github.sha }}`'
           prerelease: true
           files: packages/**
           make_latest: false

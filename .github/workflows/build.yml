@@ -123,9 +123,51 @@ jobs:
           path: src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
+  # ── macOS .dmg ──
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npx vite build
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-packages
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  # ── Windows .msi ──
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npx vite build
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles msi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-packages
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
   # ── 发布 Release / Nightly ──
   release:
-    needs: [build-linux]
+    needs: [build-linux, build-macos, build-windows]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:

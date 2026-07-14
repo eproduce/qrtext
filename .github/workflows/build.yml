@@ -35,7 +35,7 @@ jobs:
               apt-get install -y --no-install-recommends \
                 curl wget ca-certificates gnupg build-essential pkg-config \
                 libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-                libsoup-3.0-dev libglib2.0-dev libssl-dev \
+                libglib2.0-dev libssl-dev \
                 patchelf file
 
               # ── Node.js 22 ──
@@ -46,20 +46,30 @@ jobs:
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
               . /root/.cargo/env
 
-              # ── webkit2gtk-4.1（Bullseye 可能没有，从 Jammy 拉取） ──
-              echo "安装 webkit2gtk-4.1..."
+              # ── webkit2gtk-4.1 + libsoup-3.0（从 Ubuntu Jammy 拉取） ──
+              echo "安装 webkit2gtk-4.1 + libsoup3..."
               JWKIT_VER="2.48.1-0ubuntu0.22.04.1"
-              BASE="http://archive.ubuntu.com/ubuntu/pool/universe/w/webkit2gtk"
+              WBASE="http://archive.ubuntu.com/ubuntu/pool/universe/w/webkit2gtk"
+              SBASE="http://archive.ubuntu.com/ubuntu/pool/main/libs/libsoup3"
+              SOUP_VER="3.6.1-0ubuntu1"
               cd /tmp
+              # libsoup3
+              for pkg in \
+                libsoup-3.0-0_${SOUP_VER}_amd64.deb \
+                libsoup-3.0-dev_${SOUP_VER}_amd64.deb; do
+                wget -q "${SBASE}/${pkg}" && dpkg -i "$pkg" 2>/dev/null || echo "  跳过 $pkg"
+              done
+              # webkit2gtk-4.1
               for pkg in \
                 libjavascriptcoregtk-4.1-0_${JWKIT_VER}_amd64.deb \
                 libwebkit2gtk-4.1-0_${JWKIT_VER}_amd64.deb \
                 libjavascriptcoregtk-4.1-dev_${JWKIT_VER}_amd64.deb \
                 libwebkit2gtk-4.1-dev_${JWKIT_VER}_amd64.deb; do
-                wget -q "${BASE}/${pkg}" && dpkg -i "$pkg" 2>/dev/null || echo "  跳过 $pkg"
+                wget -q "${WBASE}/${pkg}" && dpkg -i "$pkg" 2>/dev/null || echo "  跳过 $pkg"
               done
               apt-get install -f -y --no-install-recommends
               pkg-config --exists webkit2gtk-4.1 && echo "  ✓ webkit2gtk-4.1 OK" || { echo "  ✗ webkit2gtk-4.1 失败"; exit 1; }
+              pkg-config --exists libsoup-3.0 && echo "  ✓ libsoup-3.0 OK" || { echo "  ✗ libsoup-3.0 失败"; exit 1; }
               rm -rf /tmp/*
               cd /app
 

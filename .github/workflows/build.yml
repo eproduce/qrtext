@@ -286,7 +286,6 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "version=${VER}" >> $GITHUB_OUTPUT
         id: bump
-        id: bump
 
       # ── 创建 GitHub Release ──
       - name: 创建 GitHub Release

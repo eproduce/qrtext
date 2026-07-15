@@ -134,7 +134,6 @@ jobs:
           else
             echo "⚠ AppImage 生成失败"
           fi
-          fi
 
       - uses: actions/upload-artifact@v4
         with:

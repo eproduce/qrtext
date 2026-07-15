@@ -23,9 +23,6 @@ jobs:
         with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: 自动设置 nightly 版本号
-        run: node scripts/bump-version.cjs "$(node -p "require('./package.json').version")-nightly.${{ github.run_number }}"
-
       - name: 安装构建依赖
         run: |
           sudo apt-get update
@@ -151,8 +148,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - name: 自动设置 nightly 版本号
-        run: node scripts/bump-version.cjs "$(node -p "require('./package.json').version")-nightly.${{ github.run_number }}"
       - run: npm ci
       - run: npx vite build
 
@@ -186,8 +181,6 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: dtolnay/rust-toolchain@stable
-      - name: 自动设置 nightly 版本号
-        run: node scripts/bump-version.cjs "$(node -p "require('./package.json').version")-nightly.${{ github.run_number }}"
       - run: npm ci
       - run: npx vite build
       - uses: tauri-apps/tauri-action@v0
@@ -245,34 +238,30 @@ jobs:
           path: packages
           merge-multiple: true
 
-      # ── main 分支：自动升版号 + CHANGELOG + Release ──
-      - name: 自动升版号 & 生成 CHANGELOG
+      # ── 自动 Release（版本号 = package.json 版本 + commit SHA） ──
+      - name: 生成 CHANGELOG & 创建 Release
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 计算新版本（patch +1）
           VER=$(node -p "require('./package.json').version")
-          MAJOR=$(echo $VER | cut -d. -f1)
-          MINOR=$(echo $VER | cut -d. -f2)
-          PATCH=$(echo $VER | cut -d. -f3)
-          NEW="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          echo "新版本: v${NEW}"
-
-          # 更新版本号
-          node scripts/bump-version.cjs "$NEW"
+          SHA=$(git rev-parse --short=7 HEAD)
+          TAG="v${VER}-${SHA}"
+          echo "版本: ${VER}   commit: ${SHA}   tag: ${TAG}"
 
           # 生成 CHANGELOG 条目
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           RANGE="${LAST_TAG:+${LAST_TAG}..}HEAD"
           TODAY=$(date +%Y-%m-%d)
 
-          echo "" >> /tmp/changelog-entry.md
-          echo "## ${NEW} (${TODAY})" >> /tmp/changelog-entry.md
-          echo "" >> /tmp/changelog-entry.md
-          git log ${RANGE} --pretty=format:"- %s" --no-merges >> /tmp/changelog-entry.md 2>/dev/null || echo "- 自动构建" >> /tmp/changelog-entry.md
-          echo "" >> /tmp/changelog-entry.md
+          {
+            echo ""
+            echo "## ${VER} (${TODAY})"
+            echo ""
+            git log ${RANGE} --pretty=format:"- %s" --no-merges 2>/dev/null || echo "- 自动构建"
+            echo ""
+          } >> /tmp/changelog-entry.md
 
           # 插入 CHANGELOG
           TITLE_END=$(grep -n '^## ' CHANGELOG.md | head -1 | cut -d: -f1)
@@ -283,29 +272,30 @@ jobs:
           mv /tmp/new-changelog.md CHANGELOG.md
 
           # 更新 README 版本号
-          sed -i "s/当前版本：\*\*[0-9.]*\*\*/当前版本：**${NEW}**/" README.md
+          sed -i "s/当前版本：\*\*[0-9.]*\*\*/当前版本：**${VER}**/" README.md
 
-          # 提交并推送（[skip ci] 防止循环触发）
-          git add package.json src-tauri/tauri.conf.json CHANGELOG.md README.md
-          git commit -m "chore: release v${NEW} [skip ci]" || echo "(无变更)"
+          # 提交 CHANGELOG + README（[skip ci] 防止循环）
+          git add CHANGELOG.md README.md
+          git commit -m "docs: update changelog for ${VER} [skip ci]" || echo "(无变更)"
           git push origin main
 
           # 打 tag 并推送
-          git tag "v${NEW}"
-          git push origin "v${NEW}"
+          git tag "${TAG}"
+          git push origin "${TAG}"
 
-          echo "version=${NEW}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "version=${VER}" >> $GITHUB_OUTPUT
+        id: bump
         id: bump
 
       # ── 创建 GitHub Release ──
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.bump.outputs.version && format('v{0}', steps.bump.outputs.version) || github.ref_name }}
-          name: ${{ steps.bump.outputs.version && format('v{0}', steps.bump.outputs.version) || github.ref_name }}
-          body_path: ${{ steps.bump.outcome == 'success' && 'CHANGELOG.md' || '' }}
+          tag_name: ${{ steps.bump.outputs.tag }}
+          name: ${{ steps.bump.outputs.tag }}
+          body_path: CHANGELOG.md
           files: packages/**
-          generate_release_notes: ${{ steps.bump.outcome != 'success' }}
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

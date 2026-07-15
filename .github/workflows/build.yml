@@ -51,7 +51,7 @@ jobs:
           BIN="src-tauri/target/release/qrtext"
           APPDIR="/tmp/QRTEXT.AppDir"
           rm -rf "$APPDIR"
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons" "$APPDIR/usr/share/applications"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons" "$APPDIR/usr/share/applications" "$APPDIR/usr/lib"
 
           cp "$BIN" "$APPDIR/usr/bin/qrtext"
 
@@ -67,12 +67,50 @@ jobs:
           cp src-tauri/icons/128x128.png "$APPDIR/usr/share/icons/qrtext.png"
           cp src-tauri/icons/128x128.png "$APPDIR/qrtext.png"
 
-          # AppRun：强制使用 AppImage 内的库，不碰系统库
+          # 安装 linuxdeploy + GTK 插件
+          wget -qO /usr/local/bin/linuxdeploy \
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          chmod +x /usr/local/bin/linuxdeploy
+          wget -qO /usr/local/bin/linuxdeploy-plugin-gtk.sh \
+            "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
+          chmod +x /usr/local/bin/linuxdeploy-plugin-gtk.sh
+
+          # ── Step 1: linuxdeploy 拉所有 NEEDED 库 + GTK ──
+          cd /tmp
+          DEPLOY_GTK_VERSION=3 linuxdeploy \
+            --appdir "$APPDIR" \
+            --desktop-file "$APPDIR/usr/share/applications/qrtext.desktop" \
+            --icon-file "$APPDIR/usr/share/icons/qrtext.png" \
+            --plugin gtk 2>&1 | tail -5
+
+          # ── Step 2: 强制复制全部 glibc 相关库 ──
+          echo "复制 glibc 全家桶..."
+          for lib in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 \
+                     libstdc++.so.6 libgcc_s.so.1 ld-linux-x86-64.so.2; do
+            SRC=$(find /lib /usr/lib -name "$lib" -type f 2>/dev/null | head -1)
+            if [ -n "$SRC" ]; then
+              cp -L "$SRC" "$APPDIR/usr/lib/"
+              echo "  ✓ $lib"
+            else
+              echo "  ⚠ $lib 未找到"
+            fi
+          done
+
+          # ── Step 3: patchelf 改链接器 → 强制用打包的 ld-linux + 库 ──
+          echo ""
+          echo "修补二进制链接器..."
+          patchelf --set-interpreter "$APPDIR/usr/lib/ld-linux-x86-64.so.2" \
+                   --set-rpath '$ORIGIN/../lib:$ORIGIN/../lib/x86_64-linux-gnu' \
+                   "$APPDIR/usr/bin/qrtext"
+          echo "  ✓ 链接器已指向打包的 ld-linux"
+          ldd "$APPDIR/usr/bin/qrtext" | head -5
+
+          # ── Step 4: AppRun ──
           cat > "$APPDIR/AppRun" << 'APPRUN'
           #!/bin/bash
           HERE="$(dirname "$(readlink -f "$0")")"
           export PATH="$HERE/usr/bin:$PATH"
-          export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu"
           export GTK_PATH="$HERE/usr/lib/x86_64-linux-gnu/gtk-3.0"
           export GIO_MODULE_DIR="$HERE/usr/lib/x86_64-linux-gnu/gio/modules"
           export GDK_PIXBUF_MODULE_FILE="$HERE/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
@@ -81,43 +119,21 @@ jobs:
           APPRUN
           chmod +x "$APPDIR/AppRun"
 
-          # 安装 linuxdeploy（continuous 版本会自动捆 glibc）
-          wget -qO /usr/local/bin/linuxdeploy \
-            "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
-          chmod +x /usr/local/bin/linuxdeploy
+          # ── Step 5: 打包 AppImage ──
+          echo ""
+          linuxdeploy --appdir "$APPDIR" --output appimage 2>&1 | tail -5
 
-          # 安装 GTK 插件（自动拉所有 GTK3 依赖）
-          wget -qO /usr/local/bin/linuxdeploy-plugin-gtk.sh \
-            "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
-          chmod +x /usr/local/bin/linuxdeploy-plugin-gtk.sh
-
-          # ── 关键：强制复制 glibc 和 ld-linux 到 AppDir ──
-          # linuxdeploy 默认会跳过这些"基系统"库，我们手动塞进去
-          mkdir -p "$APPDIR/usr/lib"
-          LIBC=$(ldd "$BIN" | grep 'libc\.so\.6' | awk '{print $3}')
-          LD_SO=$(ldd "$BIN" | grep 'ld-linux' | awk '{print $3}')
-          [ -f "$LIBC" ] && cp -L "$LIBC" "$APPDIR/usr/lib/"
-          [ -f "$LD_SO" ] && cp -L "$LD_SO" "$APPDIR/usr/lib/"
-
-          # 运行 linuxdeploy：自动拉所有 NEEDED 库 + GTK 插件
-          cd /tmp
-          DEPLOY_GTK_VERSION=3 linuxdeploy \
-            --appdir "$APPDIR" \
-            --desktop-file "$APPDIR/usr/share/applications/qrtext.desktop" \
-            --icon-file "$APPDIR/usr/share/icons/qrtext.png" \
-            --plugin gtk \
-            --output appimage 2>&1 | tail -15
-
-          # 检查结果
+          # ── 检查 ──
           APPI=$(ls /tmp/QRTEXT*.AppImage 2>/dev/null | head -1)
           if [ -n "$APPI" ]; then
             DEST="$GITHUB_WORKSPACE/src-tauri/target/release/bundle/appimage/"
             mkdir -p "$DEST"
             cp "$APPI" "$DEST"
             ls -lh "$DEST"
-            echo "✓ 自包含 AppImage 就绪（含 glibc + webkit2gtk-4.1 + GTK3）"
+            echo "✓ 自包含 AppImage（含完整 glibc + webkit2gtk-4.1 + GTK3）"
           else
             echo "⚠ AppImage 生成失败"
+          fi
           fi
 
       - uses: actions/upload-artifact@v4

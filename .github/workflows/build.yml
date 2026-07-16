@@ -189,23 +189,24 @@ jobs:
       - name: 制作绿色便携版 zip
         shell: bash
         run: |
-          # NSIS 安装包可用 7z 解压得到绿色版
-          SETUP=$(ls src-tauri/target/release/bundle/nsis/*_x64-setup.exe 2>/dev/null | head -1)
-          if [ -f "$SETUP" ]; then
-            7z x -oQRTEXT-portable "$SETUP" -y
-            # 删除卸载程序，保留纯运行文件
-            rm -f QRTEXT-portable/uninst.exe QRTEXT-portable/\$PLUGINSDIR -rf
+          # 直接从 Tauri 构建输出目录打包，不依赖 NSIS 提取
+          RELEASE_DIR="src-tauri/target/release"
+          mkdir -p QRTEXT-portable
+
+          cp "$RELEASE_DIR/qrtext.exe" QRTEXT-portable/
+          # 复制所有依赖 DLL
+          cp "$RELEASE_DIR"/*.dll QRTEXT-portable/ 2>/dev/null || true
+
+          # 验证 exe 存在
+          if [ -f "QRTEXT-portable/qrtext.exe" ]; then
+            ls -lh QRTEXT-portable/
             7z a QRTEXT-portable.zip QRTEXT-portable/
-            mkdir -p src-tauri/target/release/bundle/zip
-            cp QRTEXT-portable.zip src-tauri/target/release/bundle/zip/
+            mkdir -p "$RELEASE_DIR/bundle/zip"
+            cp QRTEXT-portable.zip "$RELEASE_DIR/bundle/zip/"
             echo "✓ 便携版 zip 就绪"
           else
-            echo "⚠ NSIS 打包失败，回退：直接打包二进制"
-            mkdir -p QRTEXT-portable
-            cp src-tauri/target/release/qrtext.exe QRTEXT-portable/ 2>/dev/null || true
-            7z a QRTEXT-portable.zip QRTEXT-portable/ || true
-            mkdir -p src-tauri/target/release/bundle/zip
-            cp QRTEXT-portable.zip src-tauri/target/release/bundle/zip/ 2>/dev/null || true
+            echo "⚠ qrtext.exe 未找到"
+            exit 1
           fi
 
       - uses: actions/upload-artifact@v4

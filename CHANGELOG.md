@@ -5,6 +5,10 @@
 
 
 
+
+## 0.3.8 (2026-07-16)
+
+- Windows便携版修复：直接打包构建输出 + 嵌入 WebView2
 ## 0.3.8 (2026-07-16)
 
 - 修复 AppRun 冲突：linuxdeploy 只拉库，appimagetool 打包

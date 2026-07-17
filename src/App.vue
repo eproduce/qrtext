@@ -5,7 +5,6 @@ import jsQR from 'jsqr'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import ScreenshotEditor from './components/ScreenshotEditor.vue'
-import FloatingScreenshot from './components/FloatingScreenshot.vue'
 import ScreenshotHistory from './components/ScreenshotHistory.vue'
 import type { ScreenshotRecord } from './types'
 
@@ -37,29 +36,13 @@ function onEditorSave(dataUrl: string) {
   nextTick(() => decodeQR())
 }
 
-// ── 浮动截图（钉在桌面） ──
-const pinnedScreenshots = ref<ScreenshotRecord[]>([])
-
-function pinScreenshot(dataUrl: string) {
-  const record: ScreenshotRecord = {
-    id: Date.now().toString(),
-    dataUrl,
-    thumbnailUrl: dataUrl,
-    createdAt: Date.now(),
-    x: 80 + Math.random() * 160,
-    y: 80 + Math.random() * 160,
-    width: 320,
+// ── 浮动截图（通过 Rust 创建系统级窗口） ──
+async function pinScreenshot(dataUrl: string) {
+  try {
+    await invoke('pin_screenshot', { dataUrl })
+  } catch (e) {
+    showToast('钉截图失败')
   }
-  pinnedScreenshots.value.push(record)
-}
-
-function movePinned(id: string, x: number, y: number) {
-  const r = pinnedScreenshots.value.find(r => r.id === id)
-  if (r) { r.x = x; r.y = y }
-}
-
-function closePinned(id: string) {
-  pinnedScreenshots.value = pinnedScreenshots.value.filter(r => r.id !== id)
 }
 
 // ── 截图历史 ──
@@ -484,14 +467,6 @@ const showDownload = computed(() => !!qrDataUrl.value)
         </div>
       </section>
     </main>
-
-    <!-- 浮动截图（钉在桌面） -->
-    <FloatingScreenshot
-      v-for="p in pinnedScreenshots" :key="p.id"
-      :id="p.id" :dataUrl="p.dataUrl"
-      :x="p.x ?? 80" :y="p.y ?? 80" :width="p.width ?? 320"
-      @move="movePinned" @close="closePinned"
-    />
 
     <!-- 截图编辑器 -->
     <ScreenshotEditor

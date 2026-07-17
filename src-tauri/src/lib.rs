@@ -1,7 +1,56 @@
 use std::process::Command;
 use base64::Engine;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+
+/// 创建浮动截图窗口（系统级独立窗口）
+#[tauri::command]
+fn pin_screenshot(app: tauri::AppHandle, data_url: String) -> Result<(), String> {
+  let id = format!("pin-{}", std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+
+  // 写临时 HTML 文件
+  let html = format!(r#"<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#222;display:flex;flex-direction:column;height:100vh;overflow:hidden}}
+.bar{{height:28px;background:rgba(0,0,0,0.6);display:flex;align-items:center;
+  justify-content:flex-end;padding:0 8px;-webkit-app-region:drag;flex-shrink:0}}
+.bar button{{-webkit-app-region:no-drag;border:none;background:none;color:#fff;
+  cursor:pointer;font-size:16px;width:28px;height:28px;border-radius:6px}}
+.bar button:hover{{background:rgba(255,255,255,0.15)}}
+.img-wrap{{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto;padding:0}}
+img{{max-width:100%;max-height:100%;object-fit:contain;user-select:none}}
+</style></head><body>
+<div class="bar"><button onclick="window.__TAURI__.invoke('close_pin',{{id:'{id}'}})">✕</button></div>
+<div class="img-wrap"><img src="{data_url}" /></div>
+<script>document.addEventListener('dblclick',()=>window.__TAURI__.invoke('close_pin',{{id:'{id}'}}))</script>
+</body></html>"#, id = id, data_url = data_url);
+
+  let tmp = std::env::temp_dir().join(format!("qrtext_pin_{}.html", id));
+  std::fs::write(&tmp, &html).map_err(|e| format!("{e}"))?;
+  let url = format!("file://{}", tmp.to_string_lossy());
+
+  tauri::WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::External(url.parse().map_err(|e| format!("{e}"))?))
+    .title("截图")
+    .inner_size(420.0, 320.0)
+    .min_inner_size(120.0, 80.0)
+    .resizable(true)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .build()
+    .map_err(|e| format!("{e}"))?;
+
+  Ok(())
+}
+
+#[tauri::command]
+fn close_pin(app: tauri::AppHandle, id: String) {
+  if let Some(win) = app.get_webview_window(&id) {
+    let _ = win.close();
+  }
+}
 
 /// 调用系统截图工具框选区域，返回 base64 图片数据
 #[tauri::command]
@@ -96,7 +145,7 @@ fn take_screenshot() -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![take_screenshot])
+    .invoke_handler(tauri::generate_handler![take_screenshot, pin_screenshot, close_pin])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

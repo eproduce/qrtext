@@ -4,12 +4,27 @@ import QRCode from 'qrcode'
 import jsQR from 'jsqr'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import ScreenshotEditor from './components/ScreenshotEditor.vue'
 import ScreenshotHistory from './components/ScreenshotHistory.vue'
 import type { ScreenshotRecord } from './types'
 
 declare const __APP_VERSION__: string
 const version = __APP_VERSION__
+
+// ── 浮窗模式 ──
+const isPinWindow = window.location.hash.startsWith('#pin:')
+const pinImgSrc = isPinWindow ? decodeURIComponent(window.location.hash.substring(5)) : ''
+
+if (isPinWindow) {
+  onMounted(() => {
+    // 双击关闭
+    document.addEventListener('dblclick', () => getCurrentWindow().close())
+  })
+}
+
+function pinClose() { getCurrentWindow().close() }
+function pinDragStart() { getCurrentWindow().startDragging() }
 
 // ── 关于弹窗 ──
 const showAbout = ref(false)
@@ -273,7 +288,18 @@ const showDownload = computed(() => !!qrDataUrl.value)
 </script>
 
 <template>
-  <div class="app-container" @paste="activeTab === 'decode' && onPaste($event)">
+  <!-- ── 浮窗模式 ── -->
+  <div v-if="isPinWindow" class="pin-window">
+    <div class="pin-bar" @mousedown="pinDragStart">
+      <button class="pin-close" @click="pinClose">✕</button>
+    </div>
+    <div class="pin-body">
+      <img :src="pinImgSrc" />
+    </div>
+  </div>
+
+  <!-- ── 正常模式 ── -->
+  <div v-else class="app-container" @paste="activeTab === 'decode' && onPaste($event)">
     <!-- 顶栏 -->
     <header class="app-header">
       <div class="logo">
@@ -382,9 +408,6 @@ const showDownload = computed(() => !!qrDataUrl.value)
             <button class="btn-secondary" @click="openEditor(imageSrc!)">
               ✏️ 编辑
             </button>
-            <button class="btn-secondary" @click="pinScreenshot(imageSrc!)">
-              📌 钉在桌面
-            </button>
             <button class="btn-secondary" @click="takeScreenshot">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">
                 <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
@@ -406,6 +429,7 @@ const showDownload = computed(() => !!qrDataUrl.value)
             @select="selectHistory"
             @delete="deleteHistory"
             @edit="editHistory"
+            @pin="(r) => pinScreenshot(r.editedDataUrl || r.dataUrl)"
           />
         </div>
       </section>
@@ -996,6 +1020,31 @@ const showDownload = computed(() => !!qrDataUrl.value)
 
 .modal-leave-to .about-card {
   transform: scale(0.9);
+}
+
+/* ── 浮窗模式 ── */
+.pin-window {
+  height: 100vh; display: flex; flex-direction: column;
+  background: #1a1a1a; overflow: hidden;
+}
+.pin-bar {
+  height: 28px; background: rgba(0,0,0,0.5); display: flex;
+  align-items: center; justify-content: flex-end; padding: 0 8px;
+  flex-shrink: 0; -webkit-app-region: drag;
+}
+.pin-close {
+  -webkit-app-region: no-drag; border: none; background: none;
+  color: #fff; cursor: pointer; font-size: 16px;
+  width: 28px; height: 28px; border-radius: 6px;
+}
+.pin-close:hover { background: rgba(255,255,255,0.15); }
+.pin-body {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  overflow: auto;
+}
+.pin-body img {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  user-select: none; -webkit-user-drag: none;
 }
 </style>
 

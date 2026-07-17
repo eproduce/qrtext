@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a1a;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.bar{height:28px;background:rgba(0,0,0,0.5);display:flex;align-items:center;
+  justify-content:flex-end;padding:0 8px;flex-shrink:0;
+  -webkit-app-region:drag}
+.bar button{-webkit-app-region:no-drag;border:none;background:none;color:#fff;
+  cursor:pointer;font-size:16px;width:28px;height:28px;border-radius:6px}
+.bar button:hover{background:rgba(255,255,255,0.15)}
+.wrap{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto}
+img{max-width:100%;max-height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none}
+</style></head><body>
+<div class="bar" id="dragBar"><button id="closeBtn">✕</button></div>
+<div class="wrap"><img id="img" /></div>
+<script>
+var T = window.__TAURI_INTERNALS__ || window.__TAURI__
+
+function closeWin() {
+  if (T && T.invoke) T.invoke('close_pin', { id: window.__PIN_ID__ })
+}
+document.getElementById('closeBtn').onclick = closeWin
+document.addEventListener('dblclick', closeWin)
+
+window.__setImage = function(url) { document.getElementById('img').src = url }
+
+document.getElementById('dragBar').addEventListener('mousedown', function() {
+  if (T && T.invoke) T.invoke('plugin:window|start_dragging').catch(function(){})
+})
+
+// 从 URL hash 读取图片
+var hash = window.location.hash.substring(1)
+if (hash) {
+  document.getElementById('img').src = decodeURIComponent(hash)
+}

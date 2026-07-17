@@ -9,6 +9,7 @@ const emit = defineEmits<{
   select: [record: ScreenshotRecord]
   delete: [id: string]
   edit: [record: ScreenshotRecord]
+  pin: [record: ScreenshotRecord]
 }>()
 </script>
 
@@ -22,6 +23,7 @@ const emit = defineEmits<{
           @click="emit('select', rec)"
           :title="new Date(rec.createdAt).toLocaleString()" />
         <div class="history-actions">
+          <button @click="emit('pin', rec)" title="钉在桌面">📌</button>
           <button @click="emit('edit', rec)" title="编辑">✏️</button>
           <button @click="emit('delete', rec.id)" title="删除">🗑</button>
         </div>

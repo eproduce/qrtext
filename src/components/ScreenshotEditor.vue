@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import type { DrawAction, ToolType } from '../types'
+import type { DrawAction } from '../types'
 import { useDrawingTools } from '../composables/useDrawingTools'
 import { useHistory } from '../composables/useHistory'
 
@@ -25,7 +25,7 @@ function onActionAdded() {
 }
 
 const {
-  currentTool, strokeColor, strokeWidth, fontSize,
+  currentTool, strokeColor, strokeWidth,
   isDrawing,
   onMouseDown, onMouseMove, onMouseUp,
   drawPreview, renderActions,

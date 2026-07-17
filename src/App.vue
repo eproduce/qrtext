@@ -4,6 +4,10 @@ import QRCode from 'qrcode'
 import jsQR from 'jsqr'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import ScreenshotEditor from './components/ScreenshotEditor.vue'
+import StickyNote from './components/StickyNote.vue'
+import ScreenshotHistory from './components/ScreenshotHistory.vue'
+import type { StickyNote as StickyNoteType, ScreenshotRecord } from './types'
 
 declare const __APP_VERSION__: string
 const version = __APP_VERSION__
@@ -11,14 +15,75 @@ const version = __APP_VERSION__
 // ── 关于弹窗 ──
 const showAbout = ref(false)
 onMounted(() => {
-  listen('show-about', () => {
-    showAbout.value = true
-  })
+  listen('show-about', () => { showAbout.value = true })
 })
 
 // ── 标签页 ──
-type Tab = 'decode' | 'encode'
+type Tab = 'decode' | 'encode' | 'notes'
 const activeTab = ref<Tab>('decode')
+
+// ── 截图编辑器 ──
+const showEditor = ref(false)
+const editingImage = ref('')
+
+function openEditor(dataUrl: string) {
+  editingImage.value = dataUrl
+  showEditor.value = true
+}
+
+function onEditorSave(dataUrl: string) {
+  imageSrc.value = dataUrl
+  addToHistory(dataUrl)
+  nextTick(() => decodeQR())
+}
+
+// ── 便利贴 ──
+const notes = ref<StickyNoteType[]>([])
+function addNote() {
+  notes.value.push({
+    id: Date.now().toString(),
+    text: '',
+    color: '#fff9c4',
+    x: 100 + Math.random() * 200,
+    y: 100 + Math.random() * 200,
+    width: 220,
+    height: 160,
+    createdAt: Date.now(),
+    pinned: false,
+  })
+}
+function updateNote(updated: StickyNoteType) {
+  const idx = notes.value.findIndex(n => n.id === updated.id)
+  if (idx !== -1) notes.value[idx] = updated
+}
+function closeNote(id: string) {
+  notes.value = notes.value.filter(n => n.id !== id)
+}
+
+// ── 截图历史 ──
+const historyRecords = ref<ScreenshotRecord[]>([])
+function addToHistory(dataUrl: string, editedDataUrl?: string) {
+  const record: ScreenshotRecord = {
+    id: Date.now().toString(),
+    dataUrl,
+    thumbnailUrl: dataUrl,
+    createdAt: Date.now(),
+    editedDataUrl,
+  }
+  historyRecords.value.unshift(record)
+  if (historyRecords.value.length > 20) historyRecords.value.pop()
+}
+function selectHistory(record: ScreenshotRecord) {
+  imageSrc.value = record.editedDataUrl || record.dataUrl
+  activeTab.value = 'decode'
+  nextTick(() => decodeQR())
+}
+function editHistory(record: ScreenshotRecord) {
+  openEditor(record.dataUrl)
+}
+function deleteHistory(id: string) {
+  historyRecords.value = historyRecords.value.filter(r => r.id !== id)
+}
 
 // ── 解码 ──
 const imageSrc = ref<string | null>(null)
@@ -134,6 +199,7 @@ async function takeScreenshot() {
   try {
     const dataUrl = await invoke<string>('take_screenshot')
     imageSrc.value = dataUrl
+    addToHistory(dataUrl)
     await nextTick()
     decodeQR()
   } catch (err) {
@@ -253,6 +319,12 @@ const showDownload = computed(() => !!qrDataUrl.value)
           </svg>
           生成
         </button>
+        <button
+          :class="['tab', { active: activeTab === 'notes' }]"
+          @click="activeTab = 'notes'"
+        >
+          📝 便利贴
+        </button>
       </nav>
     </header>
 
@@ -328,6 +400,9 @@ const showDownload = computed(() => !!qrDataUrl.value)
           <p v-if="decodeError" class="error-msg">{{ decodeError }}</p>
 
           <div class="decode-actions">
+            <button class="btn-secondary" @click="openEditor(imageSrc!)">
+              ✏️ 编辑截图
+            </button>
             <button class="btn-secondary" @click="takeScreenshot">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">
                 <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
@@ -342,6 +417,14 @@ const showDownload = computed(() => !!qrDataUrl.value)
               清除
             </button>
           </div>
+
+          <!-- 截图历史 -->
+          <ScreenshotHistory
+            :records="historyRecords"
+            @select="selectHistory"
+            @delete="deleteHistory"
+            @edit="editHistory"
+          />
         </div>
       </section>
 
@@ -402,6 +485,33 @@ const showDownload = computed(() => !!qrDataUrl.value)
         </div>
       </section>
     </main>
+
+    <!-- 便利贴面板 -->
+    <div v-if="activeTab === 'notes'" class="notes-panel">
+      <div class="notes-header">
+        <span>便利贴 ({{ notes.length }})</span>
+        <button class="btn-primary" @click="addNote">+ 新建</button>
+      </div>
+      <div v-if="!notes.length" class="notes-empty">
+        <p>暂无便利贴，点击"新建"创建</p>
+      </div>
+    </div>
+
+    <!-- 浮动便利贴 -->
+    <StickyNote
+      v-for="note in notes" :key="note.id"
+      :note="note"
+      @update="updateNote"
+      @close="closeNote"
+    />
+
+    <!-- 截图编辑器 -->
+    <ScreenshotEditor
+      v-if="showEditor"
+      :imageSrc="editingImage"
+      @close="showEditor = false"
+      @save="onEditorSave"
+    />
 
     <!-- 关于弹窗 -->
     <Transition name="modal">
@@ -923,6 +1033,19 @@ const showDownload = computed(() => !!qrDataUrl.value)
 
 .modal-leave-to .about-card {
   transform: scale(0.9);
+}
+
+/* ── 便利贴面板 ── */
+.notes-panel {
+  padding: 20px;
+}
+.notes-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 12px;
+  font-size: 15px; font-weight: 600;
+}
+.notes-empty {
+  text-align: center; padding: 40px; color: var(--text-secondary);
 }
 </style>
 

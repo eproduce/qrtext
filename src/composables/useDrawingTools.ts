@@ -12,7 +12,6 @@ export function useDrawingTools(
   const isDrawing = ref(false)
   const currentPoints = ref<Point[]>([])
   const startPoint = ref<Point | null>(null)
-  const fontSize = ref(20)
 
   function getCanvasPos(e: MouseEvent): Point {
     const canvas = canvasRef.value!

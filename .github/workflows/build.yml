@@ -95,17 +95,16 @@ jobs:
                    "$APPDIR/usr/bin/qrtext"
           echo "  ✓ 链接器已锁定"
 
-          # ── 4. 自定义 AppRun（覆盖 linuxdeploy 生成的） ──
+          # ── Step 4: AppRun（用 $APPDIR，不依赖 readlink） ──
           cat > "$APPDIR/AppRun" << 'APPRUN'
           #!/bin/bash
-          HERE="$(dirname "$(readlink -f "$0")")"
-          export PATH="$HERE/usr/bin:$PATH"
-          export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu"
-          export GTK_PATH="$HERE/usr/lib/x86_64-linux-gnu/gtk-3.0"
-          export GIO_MODULE_DIR="$HERE/usr/lib/x86_64-linux-gnu/gio/modules"
-          export GDK_PIXBUF_MODULE_FILE="$HERE/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          export PATH="$APPDIR/usr/bin:$PATH"
+          export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu"
+          export GTK_PATH="$APPDIR/usr/lib/x86_64-linux-gnu/gtk-3.0"
+          export GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"
+          export GDK_PIXBUF_MODULE_FILE="$APPDIR/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
           export WEBKIT_DISABLE_COMPOSITING_MODE=1
-          exec "$HERE/usr/bin/qrtext" "$@"
+          exec "$APPDIR/usr/bin/qrtext" "$@"
           APPRUN
           chmod +x "$APPDIR/AppRun"
 

@@ -89,7 +89,8 @@ function redrawOverlay() {
   const c = overlayRef.value; if (!c) return
   const ctx = c.getContext('2d')!
   ctx.clearRect(0, 0, c.width, c.height)
-  renderActions(ctx, actions.value); drawPreview(ctx)
+  const bgCtx = canvasRef.value?.getContext('2d') ?? undefined
+  renderActions(ctx, actions.value, bgCtx); drawPreview(ctx)
 }
 
 watch([actions, isDrawing, currentTool, strokeColor, currentPoints], () => nextTick(redrawOverlay), { deep: true })
@@ -113,14 +114,14 @@ function clearAll() { actions.value = []; clearHistory(); snapshot([]); nextTick
 async function copyToClipboard() {
   const c = document.createElement('canvas'); c.width = canvasSize.value.w; c.height = canvasSize.value.h
   const ctx = c.getContext('2d')!; if (bgImage.value) ctx.drawImage(bgImage.value, 0, 0, c.width, c.height)
-  renderActions(ctx, actions.value)
+  renderActions(ctx, actions.value, ctx)
   c.toBlob(async b => { if (b) await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]) })
 }
 
 async function saveImage() {
   const c = document.createElement('canvas'); c.width = canvasSize.value.w; c.height = canvasSize.value.h
   const ctx = c.getContext('2d')!; if (bgImage.value) ctx.drawImage(bgImage.value, 0, 0, c.width, c.height)
-  renderActions(ctx, actions.value); emit('save', c.toDataURL('image/png')); emit('close')
+  renderActions(ctx, actions.value, ctx); emit('save', c.toDataURL('image/png')); emit('close')
 }
 </script>
 
@@ -199,12 +200,13 @@ async function saveImage() {
 .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 3px; }
 .tb-btn {
   width: 36px; height: 36px; border: none; border-radius: 10px;
-  background: transparent; cursor: pointer;
+  background: rgba(255,255,255,0.06); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background .12s;
+  color: rgba(255,255,255,0.7);
 }
-.tb-btn:hover { background: rgba(255,255,255,0.08); }
-.tb-btn.on { background: rgba(0,122,255,0.25); }
+.tb-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+.tb-btn.on { background: rgba(0,122,255,0.3); color: #fff; }
 .tb-btn.off { opacity: 0.25; pointer-events: none; }
 .tb-icon { width: 18px; height: 18px; }
 .tb-sep { width: 1px; height: 22px; background: rgba(255,255,255,0.1); }
@@ -212,8 +214,9 @@ async function saveImage() {
   position: relative; width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; border-radius: 10px;
+  background: rgba(255,255,255,0.06);
 }
-.color-picker-wrap:hover { background: rgba(255,255,255,0.08); }
+.color-picker-wrap:hover { background: rgba(255,255,255,0.15); }
 .color-picker { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .color-dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25); }
 .width-dropdown { position: relative; }

@@ -236,22 +236,6 @@ export function useDrawingTools(
           ctx.stroke()
         }
         break
-      case 'blur':
-        if (action.startPoint && action.endPoint) {
-          // 应用像素化模糊
-          const x = Math.min(action.startPoint.x, action.endPoint.x)
-          const y = Math.min(action.startPoint.y, action.endPoint.y)
-          const w = Math.abs(action.endPoint.x - action.startPoint.x)
-          const h = Math.abs(action.endPoint.y - action.startPoint.y)
-          if (w > 0 && h > 0) {
-            try {
-              const imageData = ctx.getImageData(x, y, w, h)
-              pixelate(imageData, 8)
-              ctx.putImageData(imageData, x, y)
-            } catch { /* 忽略边界外 */ }
-          }
-        }
-        break
       case 'text':
         if (action.text && action.points.length > 0) {
           ctx.font = `${action.fontSize || 20}px sans-serif`
@@ -291,10 +275,29 @@ export function useDrawingTools(
     }
   }
 
-  // 渲染所有已确认的 actions
-  function renderActions(ctx: CanvasRenderingContext2D, actions: DrawAction[]) {
+  // 渲染所有已确认的 actions（blur 画在 bgCtx 上，其余画在 ctx 上）
+  function renderActions(ctx: CanvasRenderingContext2D, actions: DrawAction[], bgCtx?: CanvasRenderingContext2D) {
     for (const action of actions) {
-      drawAction(ctx, action)
+      if (action.tool === 'blur' && bgCtx) {
+        drawBlur(bgCtx, action)
+      } else {
+        drawAction(ctx, action)
+      }
+    }
+  }
+
+  function drawBlur(ctx: CanvasRenderingContext2D, action: DrawAction) {
+    if (!action.startPoint || !action.endPoint) return
+    const x = Math.min(action.startPoint.x, action.endPoint.x)
+    const y = Math.min(action.startPoint.y, action.endPoint.y)
+    const w = Math.abs(action.endPoint.x - action.startPoint.x)
+    const h = Math.abs(action.endPoint.y - action.startPoint.y)
+    if (w > 0 && h > 0) {
+      try {
+        const imageData = ctx.getImageData(x, y, w, h)
+        pixelate(imageData, 8)
+        ctx.putImageData(imageData, x, y)
+      } catch { /* ignore */ }
     }
   }
 

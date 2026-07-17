@@ -17,7 +17,7 @@ function onActionAdded() { snapshot(actions.value) }
 
 const {
   currentTool, strokeColor, strokeWidth,
-  isDrawing,
+  isDrawing, currentPoints,
   onMouseDown, onMouseMove, onMouseUp,
   drawPreview, renderActions,
   tools,
@@ -91,7 +91,11 @@ function redrawOverlay() {
   renderActions(ctx, actions.value); drawPreview(ctx)
 }
 
-watch([actions, isDrawing, currentTool, strokeColor], () => nextTick(redrawOverlay), { deep: true })
+watch([actions, isDrawing, currentTool, strokeColor, currentPoints], () => nextTick(redrawOverlay), { deep: true })
+
+// 鼠标事件：触发 composable 逻辑并立即重绘
+function handleMouseDown(e: MouseEvent) { onMouseDown(e); redrawOverlay() }
+function handleMouseMove(e: MouseEvent) { onMouseMove(e); redrawOverlay() }
 
 function onKeyDown(e: KeyboardEvent) {
   if (showTextInput.value) { if (e.key === 'Escape') showTextInput.value = false; return }
@@ -161,7 +165,7 @@ async function saveImage() {
     <div class="canvas-area" :style="{ width: canvasSize.w + 'px', height: canvasSize.h + 'px' }">
       <canvas ref="canvasRef" class="bg-layer" />
       <canvas ref="overlayRef" class="draw-layer"
-        @mousedown="onMouseDown" @mousemove="onMouseMove"
+        @mousedown="handleMouseDown" @mousemove="handleMouseMove"
         @mouseup="handleMouseUp" @mouseleave="onMouseUp"
         :style="{ cursor: currentTool === 'select' ? 'default' : 'crosshair' }" />
       <div v-if="showTextInput" class="text-input-popup"

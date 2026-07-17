@@ -25,22 +25,13 @@ export interface EditorState {
   isDrawing: boolean
 }
 
-export interface StickyNote {
-  id: string
-  text: string
-  color: string
-  x: number
-  y: number
-  width: number
-  height: number
-  createdAt: number
-  pinned: boolean
-}
-
 export interface ScreenshotRecord {
   id: string
   dataUrl: string
   thumbnailUrl: string
   createdAt: number
   editedDataUrl?: string
+  x?: number
+  y?: number
+  width?: number
 }

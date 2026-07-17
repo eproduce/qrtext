@@ -5,9 +5,9 @@ import jsQR from 'jsqr'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import ScreenshotEditor from './components/ScreenshotEditor.vue'
-import StickyNote from './components/StickyNote.vue'
+import FloatingScreenshot from './components/FloatingScreenshot.vue'
 import ScreenshotHistory from './components/ScreenshotHistory.vue'
-import type { StickyNote as StickyNoteType, ScreenshotRecord } from './types'
+import type { ScreenshotRecord } from './types'
 
 declare const __APP_VERSION__: string
 const version = __APP_VERSION__
@@ -19,7 +19,7 @@ onMounted(() => {
 })
 
 // ── 标签页 ──
-type Tab = 'decode' | 'encode' | 'notes'
+type Tab = 'decode' | 'encode'
 const activeTab = ref<Tab>('decode')
 
 // ── 截图编辑器 ──
@@ -37,27 +37,29 @@ function onEditorSave(dataUrl: string) {
   nextTick(() => decodeQR())
 }
 
-// ── 便利贴 ──
-const notes = ref<StickyNoteType[]>([])
-function addNote() {
-  notes.value.push({
+// ── 浮动截图（钉在桌面） ──
+const pinnedScreenshots = ref<ScreenshotRecord[]>([])
+
+function pinScreenshot(dataUrl: string) {
+  const record: ScreenshotRecord = {
     id: Date.now().toString(),
-    text: '',
-    color: '#fff9c4',
-    x: 100 + Math.random() * 200,
-    y: 100 + Math.random() * 200,
-    width: 220,
-    height: 160,
+    dataUrl,
+    thumbnailUrl: dataUrl,
     createdAt: Date.now(),
-    pinned: false,
-  })
+    x: 80 + Math.random() * 160,
+    y: 80 + Math.random() * 160,
+    width: 320,
+  }
+  pinnedScreenshots.value.push(record)
 }
-function updateNote(updated: StickyNoteType) {
-  const idx = notes.value.findIndex(n => n.id === updated.id)
-  if (idx !== -1) notes.value[idx] = updated
+
+function movePinned(id: string, x: number, y: number) {
+  const r = pinnedScreenshots.value.find(r => r.id === id)
+  if (r) { r.x = x; r.y = y }
 }
-function closeNote(id: string) {
-  notes.value = notes.value.filter(n => n.id !== id)
+
+function closePinned(id: string) {
+  pinnedScreenshots.value = pinnedScreenshots.value.filter(r => r.id !== id)
 }
 
 // ── 截图历史 ──
@@ -319,12 +321,6 @@ const showDownload = computed(() => !!qrDataUrl.value)
           </svg>
           生成
         </button>
-        <button
-          :class="['tab', { active: activeTab === 'notes' }]"
-          @click="activeTab = 'notes'"
-        >
-          📝 便利贴
-        </button>
       </nav>
     </header>
 
@@ -401,7 +397,10 @@ const showDownload = computed(() => !!qrDataUrl.value)
 
           <div class="decode-actions">
             <button class="btn-secondary" @click="openEditor(imageSrc!)">
-              ✏️ 编辑截图
+              ✏️ 编辑
+            </button>
+            <button class="btn-secondary" @click="pinScreenshot(imageSrc!)">
+              📌 钉在桌面
             </button>
             <button class="btn-secondary" @click="takeScreenshot">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">
@@ -486,23 +485,12 @@ const showDownload = computed(() => !!qrDataUrl.value)
       </section>
     </main>
 
-    <!-- 便利贴面板 -->
-    <div v-if="activeTab === 'notes'" class="notes-panel">
-      <div class="notes-header">
-        <span>便利贴 ({{ notes.length }})</span>
-        <button class="btn-primary" @click="addNote">+ 新建</button>
-      </div>
-      <div v-if="!notes.length" class="notes-empty">
-        <p>暂无便利贴，点击"新建"创建</p>
-      </div>
-    </div>
-
-    <!-- 浮动便利贴 -->
-    <StickyNote
-      v-for="note in notes" :key="note.id"
-      :note="note"
-      @update="updateNote"
-      @close="closeNote"
+    <!-- 浮动截图（钉在桌面） -->
+    <FloatingScreenshot
+      v-for="p in pinnedScreenshots" :key="p.id"
+      :id="p.id" :dataUrl="p.dataUrl"
+      :x="p.x ?? 80" :y="p.y ?? 80" :width="p.width ?? 320"
+      @move="movePinned" @close="closePinned"
     />
 
     <!-- 截图编辑器 -->
@@ -1033,19 +1021,6 @@ const showDownload = computed(() => !!qrDataUrl.value)
 
 .modal-leave-to .about-card {
   transform: scale(0.9);
-}
-
-/* ── 便利贴面板 ── */
-.notes-panel {
-  padding: 20px;
-}
-.notes-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding-bottom: 12px;
-  font-size: 15px; font-weight: 600;
-}
-.notes-empty {
-  text-align: center; padding: 40px; color: var(--text-secondary);
 }
 </style>
 

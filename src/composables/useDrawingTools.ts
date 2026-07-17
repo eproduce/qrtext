@@ -109,19 +109,7 @@ export function useDrawingTools(
         }
         break
       case 'text':
-        {
-          const text = prompt('输入文字:')
-          if (text && startPoint.value) {
-            action = {
-              tool: 'text',
-              points: [startPoint.value],
-              color: strokeColor.value,
-              lineWidth: strokeWidth.value,
-              text,
-              fontSize: fontSize.value,
-            }
-          }
-        }
+        // 文字工具由 ScreenshotEditor 组件处理内联输入，这里不生成 action
         break
     }
 
@@ -320,13 +308,11 @@ export function useDrawingTools(
     { type: 'blur', icon: '🔲', label: '马赛克' },
   ]
 
-  const colors = ['#ff3b30', '#ff9500', '#ffcc00', '#34c759', '#007aff', '#5856d6', '#af52de', '#8e8e93', '#1d1d1f']
-
   return {
-    currentTool, strokeColor, strokeWidth, fontSize,
+    currentTool, strokeColor, strokeWidth,
     isDrawing, currentPoints, startPoint,
     onMouseDown, onMouseMove, onMouseUp,
-    drawPreview, renderActions, drawArrow,
-    tools, colors,
+    drawPreview, renderActions,
+    tools,
   }
 }

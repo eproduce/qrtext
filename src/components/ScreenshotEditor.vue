@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { DrawAction } from '../types'
 import { useDrawingTools } from '../composables/useDrawingTools'
 import { useHistory } from '../composables/useHistory'
+import Icon from './Icon.vue'
 
 const props = defineProps<{ imageSrc: string }>()
 const emit = defineEmits<{ close: []; save: [dataUrl: string] }>()
@@ -130,7 +131,7 @@ async function saveImage() {
         <button v-for="t in tools" :key="t.type"
           :class="['tb-btn', { on: currentTool === t.type }]"
           @click="onToolClick(t.type)" :title="t.label">
-          <span class="tb-icon">{{ t.icon }}</span>
+          <Icon :name="t.icon" class="tb-icon" />
         </button>
         <span class="tb-sep" />
         <label class="color-picker-wrap" title="颜色">
@@ -152,9 +153,9 @@ async function saveImage() {
           </div>
         </div>
         <span class="tb-sep" />
-        <button class="tb-btn" :class="{ off: !canUndo }" @click="undoAction" title="撤销 Ctrl+Z">↩</button>
-        <button class="tb-btn" :class="{ off: !canRedo }" @click="redoAction" title="重做">↪</button>
-        <button class="tb-btn" @click="clearAll" title="清除">🗑</button>
+        <button class="tb-btn" :class="{ off: !canUndo }" @click="undoAction" title="撤销 Ctrl+Z"><Icon name="undo" class="tb-icon" /></button>
+        <button class="tb-btn" :class="{ off: !canRedo }" @click="redoAction" title="重做"><Icon name="redo" class="tb-icon" /></button>
+        <button class="tb-btn" @click="clearAll" title="清除标注"><Icon name="trash" class="tb-icon" /></button>
       </div>
       <div class="toolbar-right">
         <button class="tb-act secondary" @click="emit('close')">取消</button>
@@ -205,7 +206,7 @@ async function saveImage() {
 .tb-btn:hover { background: rgba(255,255,255,0.08); }
 .tb-btn.on { background: rgba(0,122,255,0.25); }
 .tb-btn.off { opacity: 0.25; pointer-events: none; }
-.tb-icon { font-size: 17px; line-height: 1; }
+.tb-icon { width: 18px; height: 18px; }
 .tb-sep { width: 1px; height: 22px; background: rgba(255,255,255,0.1); }
 .color-picker-wrap {
   position: relative; width: 36px; height: 36px;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ScreenshotRecord } from '../types'
+import Icon from './Icon.vue'
 
 defineProps<{
   records: ScreenshotRecord[]
@@ -23,9 +24,9 @@ const emit = defineEmits<{
           @click="emit('select', rec)"
           :title="new Date(rec.createdAt).toLocaleString()" />
         <div class="history-actions">
-          <button @click="emit('pin', rec)" title="钉在桌面">📌</button>
-          <button @click="emit('edit', rec)" title="编辑">✏️</button>
-          <button @click="emit('delete', rec.id)" title="删除">🗑</button>
+          <button @click="emit('pin', rec)" title="钉在桌面"><Icon name="pin" class="h-icon" /></button>
+          <button @click="emit('edit', rec)" title="编辑"><Icon name="edit" class="h-icon" /></button>
+          <button @click="emit('delete', rec.id)" title="删除"><Icon name="trash" class="h-icon" /></button>
         </div>
       </div>
     </div>
@@ -66,7 +67,7 @@ const emit = defineEmits<{
 .history-actions button {
   width: 20px; height: 20px; border: none; border-radius: 4px;
   background: rgba(0,0,0,0.7); color: #fff;
-  cursor: pointer; font-size: 11px;
-  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
+.h-icon { width: 12px; height: 12px; }
 </style>

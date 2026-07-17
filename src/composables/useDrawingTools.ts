@@ -299,13 +299,13 @@ export function useDrawingTools(
   }
 
   const tools: { type: ToolType; icon: string; label: string }[] = [
-    { type: 'select', icon: '👆', label: '选择' },
-    { type: 'pen', icon: '✏️', label: '画笔' },
-    { type: 'arrow', icon: '➡️', label: '箭头' },
-    { type: 'rect', icon: '▭', label: '矩形' },
-    { type: 'circle', icon: '○', label: '圆形' },
-    { type: 'text', icon: '🔤', label: '文字' },
-    { type: 'blur', icon: '🔲', label: '马赛克' },
+    { type: 'select', icon: 'select', label: '选择' },
+    { type: 'pen', icon: 'pen', label: '画笔' },
+    { type: 'arrow', icon: 'arrow', label: '箭头' },
+    { type: 'rect', icon: 'rect', label: '矩形' },
+    { type: 'circle', icon: 'circle', label: '圆形' },
+    { type: 'text', icon: 'text', label: '文字' },
+    { type: 'blur', icon: 'blur', label: '马赛克' },
   ]
 
   return {

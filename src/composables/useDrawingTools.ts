@@ -7,8 +7,8 @@ export function useDrawingTools(
   onActionAdded: () => void,
 ) {
   const currentTool = ref<ToolType>('pen')
-  const strokeColor = ref('#ff3b30')
-  const strokeWidth = ref(3)
+  const strokeColor = ref('#ff453a')
+  const strokeWidth = ref(4)
   const isDrawing = ref(false)
   const currentPoints = ref<Point[]>([])
   const startPoint = ref<Point | null>(null)

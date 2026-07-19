@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { writeImage } from '@tauri-apps/plugin-clipboard-manager'
 import type { DrawAction } from '../types'
 import { useDrawingTools } from '../composables/useDrawingTools'
 import { useHistory } from '../composables/useHistory'
@@ -25,6 +26,8 @@ const {
 } = useDrawingTools(overlayRef, actions, onActionAdded)
 
 const canvasSize = ref({ w: 800, h: 600 })
+const copyFeedback = ref(false)
+let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
 // ── 内联文字输入 ──
 const showTextInput = ref(false)
@@ -100,11 +103,21 @@ function handleMouseDown(e: MouseEvent) { onMouseDown(e); redrawOverlay() }
 function handleMouseMove(e: MouseEvent) { onMouseMove(e); redrawOverlay() }
 
 function onKeyDown(e: KeyboardEvent) {
-  if (showTextInput.value) { if (e.key === 'Escape') showTextInput.value = false; return }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-    e.preventDefault(); const r = e.shiftKey ? redo() : undo(); if (r !== null) actions.value = r
+  if (showTextInput.value) {
+    if (e.key === 'Escape') { e.preventDefault(); showTextInput.value = false; }
+    return
   }
-  if (e.key === 'Escape') emit('close')
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    e.preventDefault(); const r = e.shiftKey ? redo() : undo(); if (r !== null) actions.value = r; return
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+    e.preventDefault(); copyToClipboard(); return
+  }
+  // Cmd+W 关闭编辑器而非整个窗口
+  if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
+    e.preventDefault(); emit('close'); return
+  }
+  if (e.key === 'Escape') { e.preventDefault(); emit('close') }
 }
 
 function undoAction() { const r = undo(); if (r !== null) actions.value = r }
@@ -115,7 +128,16 @@ async function copyToClipboard() {
   const c = document.createElement('canvas'); c.width = canvasSize.value.w; c.height = canvasSize.value.h
   const ctx = c.getContext('2d')!; if (bgImage.value) ctx.drawImage(bgImage.value, 0, 0, c.width, c.height)
   renderActions(ctx, actions.value, ctx)
-  c.toBlob(async b => { if (b) await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]) })
+  try {
+    const blob = await new Promise<Blob>((resolve) => c.toBlob((b) => resolve(b!), 'image/png'))
+    const buf = await blob.arrayBuffer()
+    await writeImage(new Uint8Array(buf))
+    copyFeedback.value = true
+    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = setTimeout(() => { copyFeedback.value = false }, 1800)
+  } catch {
+    // 复制失败，静默处理
+  }
 }
 
 async function saveImage() {
@@ -126,7 +148,7 @@ async function saveImage() {
 </script>
 
 <template>
-  <div class="editor-overlay" @click.self="emit('close')">
+  <div class="editor-overlay">
     <div class="toolbar">
       <div class="toolbar-left">
         <button v-for="t in tools" :key="t.type"
@@ -160,7 +182,9 @@ async function saveImage() {
       </div>
       <div class="toolbar-right">
         <button class="tb-act secondary" @click="emit('close')">取消</button>
-        <button class="tb-act" @click="copyToClipboard">复制</button>
+        <button class="tb-act" :class="{ copied: copyFeedback }" @click="copyToClipboard">
+          {{ copyFeedback ? '已复制 ✓' : '复制 ⌘C' }}
+        </button>
         <button class="tb-act primary" @click="saveImage">完成</button>
       </div>
     </div>
@@ -246,6 +270,7 @@ async function saveImage() {
 .tb-act.primary { background: #007aff; }
 .tb-act.primary:hover { background: #0066d6; }
 .tb-act.secondary { background: transparent; color: rgba(255,255,255,0.6); }
+.tb-act.copied { background: rgba(52,199,89,0.25); color: #34c759; }
 .canvas-area {
   position: relative; border-radius: 6px; overflow: hidden;
   box-shadow: 0 12px 48px rgba(0,0,0,0.6);

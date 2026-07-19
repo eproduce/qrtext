@@ -13,7 +13,7 @@ fn pin_screenshot(app: tauri::AppHandle, data_url: String) -> Result<(), String>
   // hash 中传: pin标识 + 图片data URL
   let url_str = format!("index.html#pin:{}", encoded);
 
-  let win = tauri::WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App(url_str.into()))
+  let _win = tauri::WebviewWindowBuilder::new(&app, &id, tauri::WebviewUrl::App(url_str.into()))
     .title("截图")
     .inner_size(420.0, 320.0)
     .min_inner_size(120.0, 80.0)
@@ -136,6 +136,7 @@ pub fn run() {
             .build(),
         )?;
       }
+      app.handle().plugin(tauri_plugin_clipboard_manager::init())?;
 
       // ── 自定义菜单栏（中文标签 + 快捷键） ──
       let about_item = MenuItemBuilder::with_id("about", "关于 QRTEXT")
@@ -212,7 +213,7 @@ pub fn run() {
 
       app.set_menu(menu)?;
 
-      // ── 菜单事件：关于 / 窗口操作 ──
+      // ── 菜单事件：关于 / 窗口操作 / 编辑 ──
       let handle = app.handle().clone();
       app.on_menu_event(move |app, event| {
         match event.id().0.as_str() {
@@ -233,6 +234,26 @@ pub fn run() {
           }
           "quit_app" => {
             app.exit(0);
+          }
+          // 编辑操作：转发到网页端执行
+          "undo" | "redo" | "cut" | "copy" | "select_all" => {
+            let cmd = match event.id().0.as_str() {
+              "undo" => "undo",
+              "redo" => "redo",
+              "cut" => "cut",
+              "copy" => "copy",
+              _ => "selectAll",
+            };
+            let _ = app.get_webview_window("main").map(|w| {
+              let _ = w.eval(&format!("document.execCommand('{cmd}')"));
+            });
+          }
+          "paste" => {
+            if let Some(w) = app.get_webview_window("main") {
+              let _ = w.eval(
+                r#"(async()=>{try{const items=await navigator.clipboard.read();for(const item of items){for(const t of item.types){if(t.startsWith('image/')){const b=await item.getType(t);const f=new File([b],'clipboard.png',{type:t});const d=new DataTransfer();d.items.add(f);window.dispatchEvent(new ClipboardEvent('paste',{clipboardData:d,bubbles:true,cancelable:true}));return}}}}catch(e){}document.execCommand('paste')})()"#
+              );
+            }
           }
           _ => {}
         }

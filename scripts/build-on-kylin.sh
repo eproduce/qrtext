@@ -134,6 +134,48 @@ npx vite build
 echo "  构建 Tauri 应用（deb + AppImage）..."
 npx tauri build --bundles deb,appimage
 
+# ── 6. 验证 AppImage ──
+echo ""
+echo -e "${YELLOW}[验证] 检查构建产物...${NC}"
+
+# 检查二进制是否存在
+BIN="src-tauri/target/release/qrtext"
+if [ -f "$BIN" ]; then
+  echo -e "  ${GREEN}✓ 二进制文件: $BIN${NC}"
+  echo "   大小: $(du -h "$BIN" | cut -f1)"
+  # 检查动态链接依赖
+  echo "   关键依赖:"
+  ldd "$BIN" 2>/dev/null | grep -E "not found|webkit2gtk|gtk|glib|soup" || echo "    (ldd 检测完成)"
+else
+  echo -e "  ${RED}✗ 二进制文件未生成！编译可能失败。${NC}"
+fi
+
+# 检查 AppImage 内容
+APPIMAGE=$(ls src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -1)
+if [ -n "$APPIMAGE" ]; then
+  echo -e "  ${GREEN}✓ AppImage: $APPIMAGE${NC}"
+  echo "   大小: $(du -h "$APPIMAGE" | cut -f1)"
+  # 提取并检查 AppImage 内部结构
+  echo "   检查 AppImage 内部二进制..."
+  chmod +x "$APPIMAGE"
+  "$APPIMAGE" --appimage-extract >/dev/null 2>&1 && \
+    if [ -f squashfs-root/usr/bin/qrtext ]; then
+      echo -e "    ${GREEN}✓ 内部二进制存在: squashfs-root/usr/bin/qrtext${NC}"
+      echo "     大小: $(du -h squashfs-root/usr/bin/qrtext | cut -f1)"
+    else
+      echo -e "    ${RED}✗ AppImage 内部缺少二进制文件！${NC}"
+      echo "     内容列表:"
+      find squashfs-root/usr/bin/ -type f 2>/dev/null || echo "     (usr/bin/ 为空)"
+    fi
+    rm -rf squashfs-root
+else
+  echo -e "  ${RED}✗ AppImage 未生成！${NC}"
+  echo "  请检查是否安装了 appimagetool:"
+  echo "    wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+  echo "    chmod +x appimagetool-x86_64.AppImage"
+  echo "    sudo mv appimagetool-x86_64.AppImage /usr/local/bin/appimagetool"
+fi
+
 # ── 结果 ──
 echo ""
 echo -e "${GREEN}════════════════════════════════════════${NC}"

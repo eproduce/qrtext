@@ -126,16 +126,19 @@ fn take_screenshot() -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let result = tauri::Builder::default()
     .invoke_handler(tauri::generate_handler![take_screenshot, pin_screenshot, close_pin])
     .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
+      // ── 日志：始终启用（release 构建也需要排查问题）──
+      app.handle().plugin(
+        tauri_plugin_log::Builder::default()
+          .level(if cfg!(debug_assertions) {
+            log::LevelFilter::Trace
+          } else {
+            log::LevelFilter::Info
+          })
+          .build(),
+      )?;
       app.handle().plugin(tauri_plugin_clipboard_manager::init())?;
 
       // ── 自定义菜单栏（中文标签 + 快捷键） ──
@@ -261,6 +264,14 @@ pub fn run() {
 
       Ok(())
     })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .run(tauri::generate_context!());
+
+  if let Err(ref e) = result {
+    let msg = format!("QRTEXT 启动失败: {e}");
+    log::error!("{msg}");
+    // 写入崩溃日志文件
+    let path = std::env::temp_dir().join("qrtext_crash.log");
+    let _ = std::fs::write(&path, &msg);
+    panic!("{msg}");
+  }
 }

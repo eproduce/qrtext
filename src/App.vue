@@ -28,8 +28,17 @@ function pinDragStart() { getCurrentWindow().startDragging() }
 
 // ── 关于弹窗 ──
 const showAbout = ref(false)
-onMounted(() => {
+onMounted(async () => {
   listen('show-about', () => { showAbout.value = true })
+
+  // 拦截窗口关闭：编辑模式打开时仅关闭编辑器，不退出应用
+  const win = getCurrentWindow()
+  await win.onCloseRequested(async (event) => {
+    if (showEditor.value) {
+      showEditor.value = false
+      event.preventDefault()
+    }
+  })
 })
 
 // ── 标签页 ──

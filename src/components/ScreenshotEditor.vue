@@ -278,7 +278,7 @@ async function saveImage() {
 .bg-layer { position: absolute; inset: 0; }
 .draw-layer { position: absolute; inset: 0; z-index: 1; }
 .text-input-popup {
-  position: absolute; z-index: 5; transform: translate(-50%, -50%);
+  position: absolute; z-index: 5; transform: translateY(-50%);
 }
 .text-input-field {
   padding: 6px 14px; border: 2px solid #007aff; border-radius: 10px;

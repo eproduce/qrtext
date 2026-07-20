@@ -88,12 +88,15 @@ jobs:
             [ -n "$SRC" ] && cp -L "$SRC" "$APPDIR/usr/lib/" && echo "  ✓ $lib"
           done
 
-          # ── 3. patchelf：焊死链接器 + rpath ──
+          # 关键：把 ld-linux 也复制到二进制旁边，用相对路径解释器
+          cp "$APPDIR/usr/lib/ld-linux-x86-64.so.2" "$APPDIR/usr/bin/"
+
+          # ── 3. patchelf：相对路径解释器 + rpath ──
           echo "修补二进制..."
-          patchelf --set-interpreter "$APPDIR/usr/lib/ld-linux-x86-64.so.2" \
+          patchelf --set-interpreter './ld-linux-x86-64.so.2' \
                    --set-rpath '$ORIGIN/../lib:$ORIGIN/../lib/x86_64-linux-gnu' \
                    "$APPDIR/usr/bin/qrtext"
-          echo "  ✓ 链接器已锁定"
+          echo "  ✓ 解释器: ./ld-linux-x86-64.so.2（相对路径，跨机器兼容）"
 
           # ── Step 4: AppRun（用 $APPDIR，不依赖 readlink） ──
           cat > "$APPDIR/AppRun" << 'APPRUN'

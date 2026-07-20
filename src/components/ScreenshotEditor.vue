@@ -125,9 +125,13 @@ function redoAction() { const r = redo(); if (r !== null) actions.value = r }
 function clearAll() { actions.value = []; clearHistory(); snapshot([]); nextTick(redrawOverlay) }
 
 async function copyToClipboard() {
-  const c = document.createElement('canvas'); c.width = canvasSize.value.w; c.height = canvasSize.value.h
-  const ctx = c.getContext('2d')!; if (bgImage.value) ctx.drawImage(bgImage.value, 0, 0, c.width, c.height)
-  renderActions(ctx, actions.value, ctx)
+  if (!bgImage.value) return
+  const origW = bgImage.value.naturalWidth, origH = bgImage.value.naturalHeight
+  const c = document.createElement('canvas'); c.width = origW; c.height = origH
+  const ctx = c.getContext('2d')!
+  ctx.drawImage(bgImage.value, 0, 0, origW, origH)
+  const sx = origW / canvasSize.value.w, sy = origH / canvasSize.value.h
+  ctx.save(); ctx.scale(sx, sy); renderActions(ctx, actions.value, ctx); ctx.restore()
   try {
     const blob = await new Promise<Blob>((resolve) => c.toBlob((b) => resolve(b!), 'image/png'))
     const buf = await blob.arrayBuffer()
@@ -141,9 +145,14 @@ async function copyToClipboard() {
 }
 
 async function saveImage() {
-  const c = document.createElement('canvas'); c.width = canvasSize.value.w; c.height = canvasSize.value.h
-  const ctx = c.getContext('2d')!; if (bgImage.value) ctx.drawImage(bgImage.value, 0, 0, c.width, c.height)
-  renderActions(ctx, actions.value, ctx); emit('save', c.toDataURL('image/png')); emit('close')
+  if (!bgImage.value) return
+  const origW = bgImage.value.naturalWidth, origH = bgImage.value.naturalHeight
+  const c = document.createElement('canvas'); c.width = origW; c.height = origH
+  const ctx = c.getContext('2d')!
+  ctx.drawImage(bgImage.value, 0, 0, origW, origH)
+  const sx = origW / canvasSize.value.w, sy = origH / canvasSize.value.h
+  ctx.save(); ctx.scale(sx, sy); renderActions(ctx, actions.value, ctx); ctx.restore()
+  emit('save', c.toDataURL('image/png')); emit('close')
 }
 </script>
 

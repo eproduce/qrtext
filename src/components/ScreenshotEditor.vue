@@ -210,10 +210,10 @@ async function saveImage() {
     </div>
     <div class="canvas-area" :style="{ width: canvasSize.displayW + 'px', height: canvasSize.displayH + 'px' }">
       <canvas ref="canvasRef" class="bg-layer" :style="{ width: canvasSize.displayW + 'px', height: canvasSize.displayH + 'px' }" />
-      <canvas ref="overlayRef" class="draw-layer" :style="{ width: canvasSize.displayW + 'px', height: canvasSize.displayH + 'px' }"
+      <canvas ref="overlayRef" class="draw-layer"
+        :style="{ width: canvasSize.displayW + 'px', height: canvasSize.displayH + 'px', cursor: currentTool === 'select' ? 'default' : 'crosshair' }"
         @mousedown="handleMouseDown" @mousemove="handleMouseMove"
-        @mouseup="handleMouseUp" @mouseleave="onMouseUp"
-        :style="{ cursor: currentTool === 'select' ? 'default' : 'crosshair' }" />
+        @mouseup="handleMouseUp" @mouseleave="onMouseUp" />
       <div v-if="showTextInput" class="text-input-popup"
         :style="{ left: (textInputPos.x / canvasSize.w * 100) + '%', top: (textInputPos.y / canvasSize.h * 100) + '%' }">
         <input ref="textInputRef" v-model="textInputValue" class="text-input-field"

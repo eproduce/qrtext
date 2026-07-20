@@ -33,27 +33,31 @@ onMounted(async () => {
 })
 
 // ── 窗口关闭拦截 ──
-if (!isPinWindow) {
-  let closingConfirmed = false
+const showExitConfirm = ref(false)
+let closingConfirmed = false
 
-  const win = getCurrentWindow()
-  win.onCloseRequested(async (event) => {
-    // 已确认关闭 → 放行
+async function confirmExit() {
+  closingConfirmed = true
+  showExitConfirm.value = false
+  await getCurrentWindow().close()
+}
+
+function cancelExit() {
+  showExitConfirm.value = false
+}
+
+if (!isPinWindow) {
+  getCurrentWindow().onCloseRequested(async (event) => {
     if (closingConfirmed) return
 
     event.preventDefault()
 
-    // 编辑模式打开 → 仅关闭编辑器
     if (showEditor.value) {
       showEditor.value = false
       return
     }
 
-    // 主界面 → 确认弹窗
-    if (confirm('确定要退出 QRTEXT 吗？')) {
-      closingConfirmed = true
-      await win.close()
-    }
+    showExitConfirm.value = true
   })
 }
 
@@ -545,6 +549,20 @@ const showDownload = computed(() => !!qrDataUrl.value)
           <p class="about-desc">跨平台二维码识别与生成工具</p>
           <p class="about-tech">Tauri 2 · Vue 3 · Rust</p>
           <button class="btn-primary about-close" @click="showAbout = false">确定</button>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 退出确认弹窗 -->
+    <Transition name="modal">
+      <div v-if="showExitConfirm" class="about-overlay">
+        <div class="about-card" style="text-align: center;">
+          <h2 class="about-title">退出 QRTEXT</h2>
+          <p class="about-desc">确定要退出 QRTEXT 吗？</p>
+          <div style="display: flex; gap: 12px; justify-content: center; margin-top: 20px;">
+            <button class="btn-secondary" @click="cancelExit" style="min-width: 80px;">取消</button>
+            <button class="btn-primary" @click="confirmExit" style="min-width: 80px;">退出</button>
+          </div>
         </div>
       </div>
     </Transition>

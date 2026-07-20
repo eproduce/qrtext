@@ -37,7 +37,7 @@ if (!isPinWindow) {
   let closingConfirmed = false
 
   const win = getCurrentWindow()
-  await win.onCloseRequested(async (event) => {
+  win.onCloseRequested(async (event) => {
     // 已确认关闭 → 放行
     if (closingConfirmed) return
 

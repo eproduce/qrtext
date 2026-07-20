@@ -25,7 +25,7 @@ const {
   tools,
 } = useDrawingTools(overlayRef, actions, onActionAdded)
 
-const canvasSize = ref({ w: 800, h: 600 })
+const canvasSize = ref<{ w: number; h: number; displayW: number; displayH: number }>({ w: 800, h: 600, displayW: 800, displayH: 600 })
 const copyFeedback = ref(false)
 let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -69,10 +69,14 @@ onMounted(async () => {
   const img = new Image()
   img.onload = () => {
     bgImage.value = img
+    // 显示尺寸：适配窗口
     const maxW = window.innerWidth * 0.9, maxH = window.innerHeight * 0.78
-    let w = img.naturalWidth, h = img.naturalHeight
-    if (w > maxW || h > maxH) { const r = Math.min(maxW / w, maxH / h); w = Math.floor(w * r); h = Math.floor(h * r) }
-    canvasSize.value = { w, h }
+    let dw = img.naturalWidth, dh = img.naturalHeight
+    if (dw > maxW || dh > maxH) { const r = Math.min(maxW / dw, maxH / dh); dw = Math.floor(dw * r); dh = Math.floor(dh * r) }
+    // 画布分辨率：取显示尺寸的 2x（Retina 清晰），但不超过原图
+    const cw = Math.min(img.naturalWidth, dw * 2)
+    const ch = Math.min(img.naturalHeight, dh * 2)
+    canvasSize.value = { w: cw, h: ch, displayW: dw, displayH: dh }
     nextTick(() => { drawImage(); snapshot([]) })
   }
   img.src = props.imageSrc
@@ -85,7 +89,10 @@ function drawImage() {
   const c = canvasRef.value; if (!c || !bgImage.value) return
   c.width = canvasSize.value.w; c.height = canvasSize.value.h
   if (overlayRef.value) { overlayRef.value.width = c.width; overlayRef.value.height = c.height }
-  c.getContext('2d')!.drawImage(bgImage.value, 0, 0, c.width, c.height)
+  const ctx = c.getContext('2d')!
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(bgImage.value, 0, 0, c.width, c.height)
 }
 
 function redrawOverlay() {
@@ -130,6 +137,8 @@ async function copyToClipboard() {
   const c = document.createElement('canvas'); c.width = origW; c.height = origH
   const ctx = c.getContext('2d')!
   ctx.drawImage(bgImage.value, 0, 0, origW, origH)
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
   const sx = origW / canvasSize.value.w, sy = origH / canvasSize.value.h
   ctx.save(); ctx.scale(sx, sy); renderActions(ctx, actions.value, ctx); ctx.restore()
   try {
@@ -150,6 +159,8 @@ async function saveImage() {
   const c = document.createElement('canvas'); c.width = origW; c.height = origH
   const ctx = c.getContext('2d')!
   ctx.drawImage(bgImage.value, 0, 0, origW, origH)
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
   const sx = origW / canvasSize.value.w, sy = origH / canvasSize.value.h
   ctx.save(); ctx.scale(sx, sy); renderActions(ctx, actions.value, ctx); ctx.restore()
   emit('save', c.toDataURL('image/png')); emit('close')
@@ -197,9 +208,9 @@ async function saveImage() {
         <button class="tb-act primary" @click="saveImage">完成</button>
       </div>
     </div>
-    <div class="canvas-area" :style="{ width: canvasSize.w + 'px', height: canvasSize.h + 'px' }">
-      <canvas ref="canvasRef" class="bg-layer" />
-      <canvas ref="overlayRef" class="draw-layer"
+    <div class="canvas-area" :style="{ width: canvasSize.displayW + 'px', height: canvasSize.displayH + 'px' }">
+      <canvas ref="canvasRef" class="bg-layer" :style="{ width: canvasSize.displayW + 'px', height: canvasSize.displayH + 'px' }" />
+      <canvas ref="overlayRef" class="draw-layer" :style="{ width: canvasSize.displayW + 'px', height: canvasSize.displayH + 'px' }"
         @mousedown="handleMouseDown" @mousemove="handleMouseMove"
         @mouseup="handleMouseUp" @mouseleave="onMouseUp"
         :style="{ cursor: currentTool === 'select' ? 'default' : 'crosshair' }" />

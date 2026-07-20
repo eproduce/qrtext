@@ -30,16 +30,32 @@ function pinDragStart() { getCurrentWindow().startDragging() }
 const showAbout = ref(false)
 onMounted(async () => {
   listen('show-about', () => { showAbout.value = true })
+})
 
-  // 拦截窗口关闭：编辑模式打开时仅关闭编辑器，不退出应用
+// ── 窗口关闭拦截 ──
+if (!isPinWindow) {
+  let closingConfirmed = false
+
   const win = getCurrentWindow()
   await win.onCloseRequested(async (event) => {
+    // 已确认关闭 → 放行
+    if (closingConfirmed) return
+
+    event.preventDefault()
+
+    // 编辑模式打开 → 仅关闭编辑器
     if (showEditor.value) {
       showEditor.value = false
-      event.preventDefault()
+      return
+    }
+
+    // 主界面 → 确认弹窗
+    if (confirm('确定要退出 QRTEXT 吗？')) {
+      closingConfirmed = true
+      await win.close()
     }
   })
-})
+}
 
 // ── 标签页 ──
 type Tab = 'decode' | 'encode'

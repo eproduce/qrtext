@@ -557,11 +557,23 @@ const showDownload = computed(() => !!qrDataUrl.value)
     <Transition name="modal">
       <div v-if="showExitConfirm" class="about-overlay">
         <div class="about-card" style="text-align: center;">
+          <div class="about-icon">
+            <svg viewBox="0 0 32 32" width="48" height="48">
+              <circle cx="16" cy="16" r="15" fill="none" stroke="#ff3b30" stroke-width="2" opacity="0.5"/>
+              <path d="M16 10v8M16 22h.01" stroke="#ff3b30" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
           <h2 class="about-title">退出 QRTEXT</h2>
           <p class="about-desc">确定要退出 QRTEXT 吗？</p>
           <div style="display: flex; gap: 12px; justify-content: center; margin-top: 20px;">
-            <button class="btn-secondary" @click="cancelExit" style="min-width: 80px;">取消</button>
-            <button class="btn-primary" @click="confirmExit" style="min-width: 80px;">退出</button>
+            <button class="btn-secondary" style="justify-content: center; min-width: 100px;" @click="cancelExit">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+              取消
+            </button>
+            <button class="btn-primary" style="min-width: 100px;" @click="confirmExit">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M4 6l4 4 4-4M3 13h10"/></svg>
+              退出
+            </button>
           </div>
         </div>
       </div>

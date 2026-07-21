@@ -7,6 +7,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import ScreenshotEditor from './components/ScreenshotEditor.vue'
 import ScreenshotHistory from './components/ScreenshotHistory.vue'
+import ScreenshotCapture from './components/ScreenshotCapture.vue'
 import type { ScreenshotRecord } from './types'
 
 declare const __APP_VERSION__: string
@@ -223,19 +224,23 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
-// ── 解码：系统框选截图 ──
-async function takeScreenshot() {
-  try {
-    const dataUrl = await invoke<string>('take_screenshot')
-    imageSrc.value = dataUrl
-    addToHistory(dataUrl)
-    await nextTick()
-    decodeQR()
-  } catch (err) {
-    const msg = String(err)
-    if (msg.includes('已取消')) return
-    showToast('截图失败，请重试')
-  }
+// ── 原生截图选区 ──
+const showCapture = ref(false)
+
+function takeScreenshot() {
+  showCapture.value = true
+}
+
+async function onCaptureResult(dataUrl: string) {
+  showCapture.value = false
+  imageSrc.value = dataUrl
+  addToHistory(dataUrl)
+  await nextTick()
+  decodeQR()
+}
+
+function onCaptureCancel() {
+  showCapture.value = false
 }
 
 // ── 解码：清除 ──
@@ -520,6 +525,13 @@ const showDownload = computed(() => !!qrDataUrl.value)
         </div>
       </section>
     </main>
+
+    <!-- 原生截图选区 -->
+    <ScreenshotCapture
+      v-if="showCapture"
+      @captured="onCaptureResult"
+      @cancel="onCaptureCancel"
+    />
 
     <!-- 截图编辑器 -->
     <ScreenshotEditor

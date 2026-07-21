@@ -3,6 +3,62 @@ use base64::Engine;
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
 use tauri::{Emitter, Manager};
 
+/// ── 原生截图：全屏捕获（xcap）──
+/// 返回 base64 PNG，前端展示后用户框选区域
+#[tauri::command]
+fn capture_fullscreen() -> Result<String, String> {
+  let monitors = xcap::Monitor::all().map_err(|e| format!("无法枚举显示器: {e}"))?;
+  if monitors.is_empty() {
+    return Err("未检测到显示器".into());
+  }
+  // 使用主显示器捕获
+  let primary = monitors.into_iter().next().unwrap();
+  let image = primary.capture_image().map_err(|e| format!("截图失败: {e}"))?;
+
+  // 转 base64 PNG
+  let mut buf = std::io::Cursor::new(Vec::new());
+  image
+    .write_to(&mut buf, image::ImageFormat::Png)
+    .map_err(|e| format!("编码失败: {e}"))?;
+  Ok(format!(
+    "data:image/png;base64,{}",
+    base64::engine::general_purpose::STANDARD.encode(buf.into_inner())
+  ))
+}
+
+/// ── 裁剪图片 ──
+/// 根据选区坐标从 base64 图片中裁剪，返回裁剪后的 base64
+#[tauri::command]
+fn crop_screenshot(
+  data_url: String,
+  x: u32,
+  y: u32,
+  width: u32,
+  height: u32,
+) -> Result<String, String> {
+  // 解析 data URL
+  let b64 = if let Some(idx) = data_url.find(";base64,") {
+    &data_url[idx + 8..]
+  } else {
+    return Err("无效的图片格式".into());
+  };
+  let bytes = base64::engine::general_purpose::STANDARD
+    .decode(b64)
+    .map_err(|e| format!("base64 解码失败: {e}"))?;
+
+  let img = image::load_from_memory(&bytes).map_err(|e| format!("图片加载失败: {e}"))?;
+  let cropped = img.crop_imm(x, y, width, height);
+
+  let mut buf = std::io::Cursor::new(Vec::new());
+  cropped
+    .write_to(&mut buf, image::ImageFormat::Png)
+    .map_err(|e| format!("编码失败: {e}"))?;
+  Ok(format!(
+    "data:image/png;base64,{}",
+    base64::engine::general_purpose::STANDARD.encode(buf.into_inner())
+  ))
+}
+
 /// 创建浮动截图窗口（加载主 App，通过 hash 识别浮窗模式）
 #[tauri::command]
 fn pin_screenshot(app: tauri::AppHandle, data_url: String) -> Result<(), String> {
@@ -127,7 +183,7 @@ fn take_screenshot() -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let result = tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![take_screenshot, pin_screenshot, close_pin])
+    .invoke_handler(tauri::generate_handler![take_screenshot, capture_fullscreen, crop_screenshot, pin_screenshot, close_pin])
     .setup(|app| {
       // ── 日志：始终启用（release 构建也需要排查问题）──
       app.handle().plugin(

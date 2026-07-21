@@ -4,13 +4,16 @@
   "description": "enables the default permissions",
   "windows": [
     "main",
-    "pin-*"
+    "pin-*",
+    "screenshot-*"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
+    "core:event:allow-emit",
+    "core:event:allow-listen",
     "clipboard-manager:default",
     "clipboard-manager:allow-write-image"
   ]

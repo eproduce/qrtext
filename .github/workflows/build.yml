@@ -88,17 +88,13 @@ jobs:
             [ -n "$SRC" ] && cp -L "$SRC" "$APPDIR/usr/lib/" && echo "  ✓ $lib"
           done
 
-          # 关键：把 ld-linux 也复制到二进制旁边，用相对路径解释器
-          cp "$APPDIR/usr/lib/ld-linux-x86-64.so.2" "$APPDIR/usr/bin/"
-
-          # ── 3. patchelf：相对路径解释器 + rpath ──
+          # ── 3. patchelf：设置 rpath（解释器路径无关，由 AppRun 绕过） ──
           echo "修补二进制..."
-          patchelf --set-interpreter './ld-linux-x86-64.so.2' \
-                   --set-rpath '$ORIGIN/../lib:$ORIGIN/../lib/x86_64-linux-gnu' \
+          patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/../lib/x86_64-linux-gnu' \
                    "$APPDIR/usr/bin/qrtext"
-          echo "  ✓ 解释器: ./ld-linux-x86-64.so.2（相对路径，跨机器兼容）"
+          echo "  ✓ rpath 已设置"
 
-          # ── Step 4: AppRun（用 $APPDIR，不依赖 readlink） ──
+          # ── Step 4: AppRun（直接调用 ld-linux，绕过 ELF 解释器） ──
           cat > "$APPDIR/AppRun" << 'APPRUN'
           #!/bin/bash
           export PATH="$APPDIR/usr/bin:$PATH"
@@ -107,7 +103,7 @@ jobs:
           export GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"
           export GDK_PIXBUF_MODULE_FILE="$APPDIR/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
           export WEBKIT_DISABLE_COMPOSITING_MODE=1
-          exec "$APPDIR/usr/bin/qrtext" "$@"
+          exec "$APPDIR/usr/lib/ld-linux-x86-64.so.2" --library-path "$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu" "$APPDIR/usr/bin/qrtext" "$@"
           APPRUN
           chmod +x "$APPDIR/AppRun"
 

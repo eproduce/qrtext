@@ -5,6 +5,7 @@ import jsQR from 'jsqr'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { writeImage } from '@tauri-apps/plugin-clipboard-manager'
 import ScreenshotEditor from './components/ScreenshotEditor.vue'
 import ScreenshotHistory from './components/ScreenshotHistory.vue'
 import type { ScreenshotRecord } from './types'
@@ -223,12 +224,27 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
+// ── data URL 转 Uint8Array ──
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const base64 = dataUrl.split(',')[1]
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes
+}
+
 // ── 解码：系统框选截图 ──
 async function takeScreenshot() {
   try {
     const dataUrl = await invoke<string>('take_screenshot')
     imageSrc.value = dataUrl
     addToHistory(dataUrl)
+    // 自动将截图写入系统剪贴板
+    try {
+      await writeImage(dataUrlToBytes(dataUrl))
+    } catch { /* 剪贴板写入失败不阻塞主流程 */ }
     await nextTick()
     decodeQR()
   } catch (err) {

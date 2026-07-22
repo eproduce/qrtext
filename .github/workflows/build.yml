@@ -88,7 +88,13 @@ jobs:
             [ -n "$SRC" ] && cp -L "$SRC" "$APPDIR/usr/lib/" && echo "  ✓ $lib"
           done
 
-          # ── 3. patchelf：设置 rpath（解释器路径无关，由 AppRun 绕过） ──
+          # ── 3. patchelf：清除所有打包库的 RPATH，确保 LD_LIBRARY_PATH 优先生效 ──
+          echo "清除库文件的 RPATH/RUNPATH..."
+          find "$APPDIR/usr/lib" -name '*.so*' -type f | while read lib; do
+            patchelf --remove-rpath "$lib" 2>/dev/null || true
+          done
+          echo "  ✓ 已清除所有库的 RPATH"
+
           echo "修补二进制..."
           patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/../lib/x86_64-linux-gnu' \
                    "$APPDIR/usr/bin/qrtext"

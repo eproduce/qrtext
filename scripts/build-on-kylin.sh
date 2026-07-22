@@ -134,6 +134,22 @@ npx vite build
 echo "  构建 Tauri 应用（deb + AppImage）..."
 npx tauri build --bundles deb,appimage
 
+# ── 5.5. 修补 AppImage：打入 libstdc++（解决 GLIBCXX 版本不兼容） ──
+echo ""
+echo -e "${YELLOW}[4.5/4] 修补 AppImage（libstdc++）...${NC}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# 切回项目根目录，确保路径正确
+cd "$PROJECT_ROOT"
+
+if [ -f "$SCRIPT_DIR/patch-appimage.sh" ]; then
+  bash "$SCRIPT_DIR/patch-appimage.sh"
+else
+  echo -e "${YELLOW}  ⚠ 未找到 patch-appimage.sh，跳过补丁${NC}"
+  echo "  请确保 scripts/patch-appimage.sh 存在"
+fi
+
 # ── 6. 验证 AppImage ──
 echo ""
 echo -e "${YELLOW}[验证] 检查构建产物...${NC}"
@@ -195,5 +211,6 @@ if [ -n "$APPIMAGE" ]; then
 fi
 
 echo ""
-echo -e "${YELLOW}  提示：如果 AppImage 运行时提示缺少依赖，${NC}"
-echo -e "${YELLOW}  可先安装 .deb 包（自动处理依赖），再使用 AppImage。${NC}"
+echo -e "${YELLOW}  提示：${NC}"
+echo -e "${YELLOW}  1. AppImage 已自动打入 libstdc++.so.6，解决 GLIBCXX_3.4.29 错误${NC}"
+echo -e "${YELLOW}  2. 如仍有依赖问题，可先安装 .deb 包（自动处理依赖）再使用 AppImage${NC}"

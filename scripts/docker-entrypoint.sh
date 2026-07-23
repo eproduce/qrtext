@@ -140,66 +140,43 @@ echo ""
 echo "=== AppImage ==="
 ls -lh /workspace/src-tauri/target/release/bundle/appimage/ 2>/dev/null || echo "  (无)"
 
-# 验证 AppImage 内部内容（Docker 无 FUSE，直接用 unsquashfs）
+# 验证：直接检查构建目录（不提取 AppImage，避免 unsquashfs 兼容问题）
 echo ""
-echo "=== 提取 AppImage 验证 ==="
-OFFSET=$(grep -abo 'hsqs' "$DEST"/*.AppImage 2>/dev/null | awk -F: '$1 > 131072 {print $1; exit}')
-if [ -n "$OFFSET" ]; then
-  dd if="$DEST"/*.AppImage bs=1 skip="$OFFSET" of=/tmp/v.squashfs status=none 2>/dev/null
-  rm -rf /tmp/v_extract
-  unsquashfs -d /tmp/v_extract /tmp/v.squashfs >/dev/null 2>&1
-  VDIR="/tmp/v_extract"
+echo "=== 产物验证 ==="
+set +e  # 验证失败不阻塞构建
+
+BIN="/workspace/src-tauri/target/release/qrtext"
+LIB_DIR="$APPDIR/usr/lib"
+
+echo ""
+echo "二进制 glibc 需求:"
+objdump -T "$BIN" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -3 || echo "  (objdump 不可用)"
+
+echo ""
+echo "已打包的 C/C++ 运行时:"
+for f in libstdc++.so.6 libstdc++.so.6.* libc.so.6 libgcc_s.so.1; do
+  ls -la "$LIB_DIR/$f" 2>/dev/null && echo "  ✓ $f" || echo "  ✗ $f"
+done
+
+if ls "$LIB_DIR/libstdc++.so"* >/dev/null 2>&1; then
+  LIBCPP=$(find "$LIB_DIR" -name 'libstdc++.so*' -type f | head -1)
+  VER=$(strings "$LIBCPP" 2>/dev/null | grep -oP 'GLIBCXX_\d+\.\d+\.\d+' | sort -Vu | tail -1 || echo "?")
+  echo ""
+  echo "自带 libstdc++: $VER"
+  echo "麒麟系统自带:   GLIBCXX_3.4.25 左右"
 else
-  echo "⚠ 无法提取 AppImage，跳过验证"
-  VDIR=""
+  echo ""
+  echo "!!! 未找到 libstdc++.so !!!"
 fi
 
-if [ -n "$VDIR" ] && [ -d "$VDIR" ]; then
-  echo ""
-  echo "════════════════════════════════════════════"
-  echo "  AppImage 自包含验证"
-  echo "════════════════════════════════════════════"
-  echo ""
-  echo "usr/lib/ 完整目录（前30项）:"
-  ls "$VDIR/usr/lib/" 2>/dev/null | head -30 || echo "  (空)"
+echo ""
+echo "已打包 .so 文件总数: $(find "$LIB_DIR" -name '*.so*' -type f 2>/dev/null | wc -l)"
 
-  echo ""
-  echo "关键 glibc 文件逐一检查:"
-  for f in libc.so.6 libstdc++.so.6 libstdc++.so.6.* libgcc_s.so.1 ld-linux-x86-64.so.2; do
-    if ls "$VDIR/usr/lib/$f" >/dev/null 2>&1; then
-      ls -la "$VDIR/usr/lib/$f" 2>/dev/null
-      echo "  ✓ $f"
-    else
-      echo "  ✗ $f 缺失"
-    fi
-  done || true
+echo ""
+echo "AppRun 前3行:"
+head -3 "$APPDIR/AppRun" 2>/dev/null || echo "  (无)"
 
-  echo ""
-  echo "子目录: $(ls -d "$VDIR/usr/lib/"*/ 2>/dev/null | tr '
-' ' ' || echo '无')"
-
-  LIBCPP_FILE=$(find "$VDIR/usr/lib" -name 'libstdc++.so*' -type f 2>/dev/null | head -1)
-  if [ -n "$LIBCPP_FILE" ]; then
-    LIBCPP_VER=$(strings "$LIBCPP_FILE" | grep -oP 'GLIBCXX_\d+\.\d+\.\d+' | sort -Vu | tail -1 || echo '?' )
-    echo ""
-    echo "自带 libstdc++: $LIBCPP_VER"
-    echo "麒麟系统自带:   GLIBCXX_3.4.25 左右"
-  else
-    echo ""
-    echo "⚠ 未找到 libstdc++.so！检查 linuxdeploy 是否收集了它"
-  fi
-
-  if [ -f "$VDIR/usr/bin/qrtext" ]; then
-    GLIBC_VER=$(objdump -T "$VDIR/usr/bin/qrtext" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -1 || echo '?' )
-    echo "二进制最高 glibc 需求: $GLIBC_VER"
-  fi
-
-  BUNDLED_GLIBC=$(strings "$VDIR/usr/lib/libc.so.6" 2>/dev/null | grep -oP 'release version \K[\d.]+' | head -1 || echo '?' )
-  echo "AppImage 自带 glibc:   $BUNDLED_GLIBC"
-  echo "麒麟系统 glibc:        2.28 左右"
-
-  rm -rf /tmp/v.squashfs /tmp/v_extract
-fi
+set -e
 
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════${NC}"

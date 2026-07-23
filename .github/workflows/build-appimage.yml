@@ -1,14 +1,12 @@
 # ═══════════════════════════════════════════════════════════════
 #  GitHub Actions：构建 AppImage → 麒麟离线部署
 #
-#  触发方式：
-#    - 推送 tag v* 时自动构建 + 发布 Release
-#    - 手动在 Actions 页面触发（workflow_dispatch）
+#  关键验证（失败=构建不通过，不会产出有问题的 AppImage）：
+#   1. 二进制 glibc 需求 ≤ 2.31（否则麒麟不兼容）
+#   2. 内部 libstdc++ ≥ GLIBCXX_3.4.29
+#   3. 动态库依赖无缺失
 #
-#  产物：兼容麒麟 SP1 V10 的 AppImage
-#        - webkit2gtk-4.1 已打包（Tauri 自动处理）
-#        - libstdc++.so.6 已打入（patch-appimage.sh，含 GLIBCXX_3.4.30）
-#        - AppRun 解释器路径已修正为标准 /lib64/
+#  触发：推送 tag v* 自动发布 / 手动 workflow_dispatch
 # ═══════════════════════════════════════════════════════════════
 name: Build AppImage
 
@@ -60,46 +58,114 @@ jobs:
       - name: 构建 Tauri AppImage
         run: npx tauri build --bundles appimage
 
-      - name: 检查 glibc 兼容性（麒麟 ≈ 2.28~2.31）
+      # ═══ 硬性检查 1：glibc 兼容性 ═══
+      - name: "【硬检查1】二进制 glibc 需求 ≤ 2.31（麒麟 V10 SP1）"
         run: |
           BIN="src-tauri/target/release/qrtext"
-          echo "=== 二进制链接的 glibc 符号 ==="
+          echo "=== 二进制 glibc 符号需求 ==="
           objdump -T "$BIN" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -5
+
           MAX_GLIBC=$(objdump -T "$BIN" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -1)
+          MAX_VER=$(echo "$MAX_GLIBC" | grep -oP '\d+\.\d+')
           echo ""
-          echo "最高要求: $MAX_GLIBC  (麒麟 ≈ GLIBC_2.28~2.31)"
-          if echo "$MAX_GLIBC" | grep -qE 'GLIBC_2\.(3[2-9]|[4-9][0-9])'; then
-            echo "::warning::需要 glibc >= 2.32，麒麟可能不兼容！"
-          else
-            echo "✓ glibc 版本兼容麒麟"
+          echo "最高需求: $MAX_GLIBC"
+          echo "麒麟上限: GLIBC_2.31"
+
+          if [ -z "$MAX_VER" ]; then
+            echo "::error::无法解析 glibc 版本"
+            exit 1
           fi
+
+          # 提取主版本号和次版本号比较
+          MAJOR=$(echo "$MAX_VER" | cut -d. -f1)
+          MINOR=$(echo "$MAX_VER" | cut -d. -f2)
+
+          if [ "$MAJOR" -gt 2 ] || { [ "$MAJOR" -eq 2 ] && [ "$MINOR" -gt 31 ]; }; then
+            echo ""
+            echo "::error::二进制需要 $MAX_GLIBC，但麒麟 V10 SP1 只有 GLIBC_2.28~2.31"
+            echo ""
+            echo "需要降低 glibc 依赖。可尝试："
+            echo "  1. 在 Docker 容器中构建（使用旧版 glibc 的 base image）"
+            echo "  2. 使用 cargo-zigbuild 指定 glibc 版本"
+            exit 1
+          fi
+          echo "✓ glibc 兼容"
 
       - name: 修补 AppImage（打入 libstdc++ + 修正 AppRun + 修正 RPATH）
         run: bash scripts/patch-appimage.sh
 
-      - name: 最终验证
+      # ═══ 硬性检查 2：提取并验证内部依赖 ═══
+      - name: "【硬检查2】内部依赖完整性验证"
         run: |
           APPIMAGE=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
-          echo "AppImage: $APPIMAGE"
-          echo "大小: $(du -h "$APPIMAGE" | cut -f1)"
-          echo ""
-          echo "=== 提取 squashfs 验证内容 ==="
+          echo "AppImage: $APPIMAGE ($(du -h "$APPIMAGE" | cut -f1))"
+
+          # 提取 squashfs
           OFFSET=$(grep -abo 'hsqs' "$APPIMAGE" 2>/dev/null | awk -F: '$1 > 131072 {print $1; exit}')
-          if [ -n "$OFFSET" ]; then
-            dd if="$APPIMAGE" bs=1 skip="$OFFSET" of=/tmp/verify.squashfs status=none 2>/dev/null
-            unsquashfs -d /tmp/verify_extract /tmp/verify.squashfs >/dev/null 2>&1 || true
-            if [ -f /tmp/verify_extract/usr/lib/libstdc++.so.6 ]; then
-              echo "✓ libstdc++ 已打包:"
-              strings /tmp/verify_extract/usr/lib/libstdc++.so.6 | grep GLIBCXX | tail -3
-            fi
-            if [ -f /tmp/verify_extract/usr/bin/qrtext ]; then
-              echo "✓ 二进制 glibc 需求:"
-              objdump -T /tmp/verify_extract/usr/bin/qrtext 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -3
-            fi
-            rm -rf /tmp/verify.squashfs /tmp/verify_extract
-          else
-            echo "⚠ 无法定位 squashfs，跳过内容验证"
+          if [ -z "$OFFSET" ]; then
+            echo "::error::无法定位 squashfs 镜像"
+            exit 1
           fi
+
+          dd if="$APPIMAGE" bs=1 skip="$OFFSET" of=/tmp/v.squashfs status=none 2>/dev/null
+          rm -rf /tmp/v_extract
+          unsquashfs -d /tmp/v_extract /tmp/v.squashfs >/dev/null 2>&1
+
+          BIN="/tmp/v_extract/usr/bin/qrtext"
+          LIB_DIR="/tmp/v_extract/usr/lib"
+
+          # 检查2a：libstdc++ 存在且版本够新
+          INTERNAL_LIBCPP="$LIB_DIR/libstdc++.so.6"
+          if [ ! -f "$INTERNAL_LIBCPP" ]; then
+            echo "::error::内部缺少 libstdc++.so.6"
+            exit 1
+          fi
+          LIBCPP_MAX=$(strings "$INTERNAL_LIBCPP" | grep -oP 'GLIBCXX_\d+\.\d+\.\d+' | sort -Vu | tail -1)
+          echo "内部 libstdc++ 最高: $LIBCPP_MAX"
+          if ! echo "$LIBCPP_MAX" | grep -qE '3\.4\.(29|30|[3-9][0-9])'; then
+            echo "::error::内部 libstdc++ 版本不够新（需要 ≥ GLIBCXX_3.4.29）"
+            exit 1
+          fi
+          echo "✓ libstdc++ 版本满足"
+
+          # 检查2b：AppRun 存在且 LD_LIBRARY_PATH 正确
+          if ! grep -q 'LD_LIBRARY_PATH.*usr/lib' /tmp/v_extract/AppRun 2>/dev/null; then
+            echo "::error::AppRun 未设置 LD_LIBRARY_PATH"
+            exit 1
+          fi
+          echo "✓ AppRun LD_LIBRARY_PATH 正确"
+
+          # 检查2c：二进制存在且为 ELF
+          if [ ! -f "$BIN" ]; then
+            echo "::error::内部缺少二进制文件"
+            exit 1
+          fi
+          if ! file "$BIN" | grep -q "ELF"; then
+            echo "::error::二进制不是 ELF 格式"
+            exit 1
+          fi
+
+          # 检查2d：动态库依赖（模拟麒麟环境：只用 AppImage 内部 lib）
+          echo ""
+          echo "=== 动态库依赖检查 ==="
+          LD_LIBRARY_PATH="$LIB_DIR" ldd "$BIN" 2>/dev/null | tee /tmp/ldd_output.txt
+
+          MISSING=$(grep "not found" /tmp/ldd_output.txt 2>/dev/null || true)
+          if [ -n "$MISSING" ]; then
+            echo ""
+            echo "::error::以下库缺失（麒麟系统上也会缺失）："
+            echo "$MISSING"
+            exit 1
+          fi
+          echo "✓ 所有依赖库均可解析"
+
+          # 检查2e：最终 glibc 确认
+          MAX_GLIBC_FINAL=$(objdump -T "$BIN" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -1)
+          echo ""
+          echo "最终二进制 glibc 需求: $MAX_GLIBC_FINAL"
+
+          # 清理
+          rm -rf /tmp/v.squashfs /tmp/v_extract /tmp/ldd_output.txt
 
       - name: 上传 AppImage 产物
         uses: actions/upload-artifact@v4

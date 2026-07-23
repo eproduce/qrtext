@@ -63,17 +63,25 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# ── 4. 预下载 linuxdeploy + appimagetool ──
-RUN wget -qO /usr/local/bin/linuxdeploy \
-      "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
-    && chmod +x /usr/local/bin/linuxdeploy \
+# ── 4. 预下载 + 提取 linuxdeploy / appimagetool（绕过 Docker 无 FUSE 问题） ──
+RUN cd /tmp \
+    && wget -q "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
+    && chmod +x linuxdeploy-x86_64.AppImage \
+    && ./linuxdeploy-x86_64.AppImage --appimage-extract >/dev/null 2>&1 \
+    && mv squashfs-root /opt/linuxdeploy \
+    && ln -s /opt/linuxdeploy/AppRun /usr/local/bin/linuxdeploy \
+    && rm linuxdeploy-x86_64.AppImage \
+    && echo "✓ linuxdeploy 已提取" \
+    && wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
+    && chmod +x appimagetool-x86_64.AppImage \
+    && ./appimagetool-x86_64.AppImage --appimage-extract >/dev/null 2>&1 \
+    && mv squashfs-root /opt/appimagetool \
+    && ln -s /opt/appimagetool/AppRun /usr/local/bin/appimagetool \
+    && rm appimagetool-x86_64.AppImage \
+    && echo "✓ appimagetool 已提取" \
     && wget -qO /usr/local/bin/linuxdeploy-plugin-gtk.sh \
       "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh" \
-    && chmod +x /usr/local/bin/linuxdeploy-plugin-gtk.sh \
-    && wget -qO /usr/local/bin/appimagetool \
-      "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
-    && chmod +x /usr/local/bin/appimagetool \
-    && echo "✓ linuxdeploy + appimagetool 预下载完成"
+    && chmod +x /usr/local/bin/linuxdeploy-plugin-gtk.sh
 
 # ── 5. 入口脚本 ──
 COPY scripts/docker-entrypoint.sh /usr/local/bin/

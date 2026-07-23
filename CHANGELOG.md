@@ -18,6 +18,14 @@
 
 
 
+
+## 0.4.0 (2026-07-23)
+
+- fix: 修复 AppImage 重新打包时 squashfs offset 误检测和验证 segfault
+- fix: patch-appimage.sh CONDA_PREFIX unbound variable
+- fix(ci): 简化为原生 ubuntu-22.04，移除不可靠的容器+wget 方案
+- fix(ci): 使用 ubuntu:20.04 容器构建，兼容麒麟 glibc 2.31
+- fix: AppImage 麒麟兼容性完整修复 + GitHub Actions CI 构建流水线
 ## 0.4.0 (2026-07-22)
 
 - feat: 截图完成后自动将图片写入系统剪贴板

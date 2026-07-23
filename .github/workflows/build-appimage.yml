@@ -82,15 +82,24 @@ jobs:
           APPIMAGE=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
           echo "AppImage: $APPIMAGE"
           echo "大小: $(du -h "$APPIMAGE" | cut -f1)"
-          chmod +x "$APPIMAGE"
-          "$APPIMAGE" --appimage-extract >/dev/null 2>&1
           echo ""
-          echo "=== 内部 libstdc++ ==="
-          strings squashfs-root/usr/lib/libstdc++.so.6 2>/dev/null | grep GLIBCXX | tail -3
-          echo ""
-          echo "=== 二进制 glibc 需求 ==="
-          objdump -T squashfs-root/usr/bin/qrtext 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -3
-          rm -rf squashfs-root
+          echo "=== 提取 squashfs 验证内容 ==="
+          OFFSET=$(grep -abo 'hsqs' "$APPIMAGE" 2>/dev/null | awk -F: '$1 > 131072 {print $1; exit}')
+          if [ -n "$OFFSET" ]; then
+            dd if="$APPIMAGE" bs=1 skip="$OFFSET" of=/tmp/verify.squashfs status=none 2>/dev/null
+            unsquashfs -d /tmp/verify_extract /tmp/verify.squashfs >/dev/null 2>&1 || true
+            if [ -f /tmp/verify_extract/usr/lib/libstdc++.so.6 ]; then
+              echo "✓ libstdc++ 已打包:"
+              strings /tmp/verify_extract/usr/lib/libstdc++.so.6 | grep GLIBCXX | tail -3
+            fi
+            if [ -f /tmp/verify_extract/usr/bin/qrtext ]; then
+              echo "✓ 二进制 glibc 需求:"
+              objdump -T /tmp/verify_extract/usr/bin/qrtext 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -3
+            fi
+            rm -rf /tmp/verify.squashfs /tmp/verify_extract
+          else
+            echo "⚠ 无法定位 squashfs，跳过内容验证"
+          fi
 
       - name: 上传 AppImage 产物
         uses: actions/upload-artifact@v4

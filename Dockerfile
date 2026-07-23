@@ -4,6 +4,14 @@
 #  镜像用途：在 CI 或本地构建 deb / rpm / 麒麟自包含 AppImage
 #  基础系统：Ubuntu 22.04（webkit2gtk-4.1 原生支持）
 #
+#  【为何用 22.04 而非 20.04？】
+#   webkit2gtk-4.1 的 .so 本身是 Ubuntu 22.04 编译的，已链接 glibc 2.35。
+#   如果用 20.04（glibc 2.31）构建，bundled glibc 只有 2.31，无法满足
+#   webkit2gtk libs 的 GLIBC_2.35 需求。
+#   用 22.04 → 编译 + 打包的 glibc 版本一致 → 自包含 AppImage 通过自带
+#   ld-linux 加载自带 libc 2.35，完全不碰麒麟系统的 glibc 2.28。
+#   麒麟内核 4.19 满足 glibc 2.35 的最低内核要求（3.2+）。
+#
 #  构建产物（挂载到 /workspace）：
 #    src-tauri/target/release/bundle/deb/*.deb
 #    src-tauri/target/release/bundle/rpm/*.rpm

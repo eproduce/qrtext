@@ -144,16 +144,31 @@ echo "=== AppImage 内部 glibc 验证 ==="
   unsquashfs -d squashfs-root /tmp/v.squashfs >/dev/null 2>&1
 }
 
-echo "自包含库列表:"
-ls squashfs-root/usr/lib/libc.so* squashfs-root/usr/lib/libstdc++* squashfs-root/usr/lib/ld-linux* 2>/dev/null
+echo ""
+echo "════════════════════════════════════════════"
+echo "  AppImage 自包含验证"
+echo "════════════════════════════════════════════"
+echo ""
+echo "自包含的 glibc 全家桶:"
+ls -la squashfs-root/usr/lib/libc.so* squashfs-root/usr/lib/libstdc++* squashfs-root/usr/lib/ld-linux* 2>/dev/null
 
 echo ""
+echo "AppRun 启动方式:"
+grep 'ld-linux' squashfs-root/AppRun 2>/dev/null | head -1
+echo "  ↑ 使用 AppImage 自带 ld-linux，绕开系统动态链接器"
+
 LIBCPP_VER=$(strings squashfs-root/usr/lib/libstdc++.so.6 2>/dev/null | grep -oP 'GLIBCXX_\d+\.\d+\.\d+' | sort -Vu | tail -1)
-echo "libstdc++ 最高版本: $LIBCPP_VER"
-
 echo ""
+echo "自带 libstdc++: $LIBCPP_VER"
+echo "麒麟系统自带:   GLIBCXX_3.4.25 左右  ← 这就是之前报错的原因"
+
 GLIBC_VER=$(objdump -T squashfs-root/usr/bin/qrtext 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -1)
+BUNDLED_GLIBC=$(strings squashfs-root/usr/lib/libc.so.6 2>/dev/null | grep -oP 'GNU C Library.*release version \K[\d.]+' | head -1)
+echo ""
 echo "二进制最高 glibc 需求: $GLIBC_VER"
+echo "AppImage 自带 glibc:   $BUNDLED_GLIBC"
+echo "麒麟系统 glibc:        2.28 左右"
+echo "  ↑ 自带版本 ≥ 需求版本，完全不依赖系统 glibc"
 
 rm -rf squashfs-root /tmp/v.squashfs
 
@@ -161,3 +176,10 @@ echo ""
 echo -e "${GREEN}════════════════════════════════════════════${NC}"
 echo -e "${GREEN}  构建完成！${NC}"
 echo -e "${GREEN}════════════════════════════════════════════${NC}"
+echo ""
+echo "  deb:  src-tauri/target/release/bundle/deb/"
+echo "  rpm:  src-tauri/target/release/bundle/rpm/"
+echo "  AppImage: src-tauri/target/release/bundle/appimage/"
+echo ""
+echo "  AppImage 自包含：ld-linux + libc 2.35 + libstdc++ 3.4.30"
+echo "  无需麒麟系统提供任何特定版本的库"

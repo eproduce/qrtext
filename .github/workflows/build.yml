@@ -14,7 +14,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Linux AppImage（完全自包含，不依赖系统 glibc/GTK） ──
+  # ── Linux：deb + rpm + 麒麟专用 AppImage（自包含 glibc 全家桶） ──
   build-linux:
     runs-on: ubuntu-22.04
     steps:
@@ -30,7 +30,7 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev \
             libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            libssl-dev patchelf file
+            libssl-dev patchelf file rpm
 
       - run: npm ci
       - run: npx vite build
@@ -40,9 +40,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --bundles deb
+          args: --bundles deb,rpm
 
-      - name: 制作完全自包含 AppImage
+      - name: 制作麒麟专用 AppImage（自包含 glibc + webkit2gtk-4.1 + GTK3）
         run: |
           set -e
           BIN="src-tauri/target/release/qrtext"
@@ -131,12 +131,43 @@ jobs:
             echo "✓ 自包含 AppImage（完整 glibc + webkit2gtk-4.1 + GTK3）"
           else
             echo "⚠ AppImage 生成失败"
+            exit 1
           fi
+
+      - name: 验证 AppImage 内部依赖
+        run: |
+          APPI=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
+          echo "验证: $APPI ($(du -h "$APPI" | cut -f1))"
+
+          # 提取并检查
+          chmod +x "$APPI"
+          "$APPI" --appimage-extract >/dev/null 2>&1 || {
+            echo "::warning::--appimage-extract 失败，尝试 unsquashfs..."
+            OFFSET=$(grep -abo 'hsqs' "$APPI" | awk -F: '$1 > 131072 {print $1; exit}')
+            dd if="$APPI" bs=1 skip="$OFFSET" of=/tmp/v.squashfs status=none 2>/dev/null
+            unsquashfs -d squashfs-root /tmp/v.squashfs >/dev/null 2>&1
+          }
+
+          echo "=== 内部关键库 ==="
+          ls -la squashfs-root/usr/lib/libstdc++* squashfs-root/usr/lib/libc.so* squashfs-root/usr/lib/ld-linux* 2>/dev/null || echo "  (部分库未找到)"
+
+          echo ""
+          echo "=== libstdc++ GLIBCXX 版本 ==="
+          strings squashfs-root/usr/lib/libstdc++.so.6 2>/dev/null | grep GLIBCXX | tail -3
+
+          echo ""
+          echo "=== AppRun 自包含检查 ==="
+          grep -c 'ld-linux' squashfs-root/AppRun 2>/dev/null && echo "✓ 使用自包含 ld-linux（不依赖系统 glibc）" || echo "⚠ 未使用自包含 ld-linux"
+
+          rm -rf squashfs-root /tmp/v.squashfs
 
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-appimage
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          name: linux-packages
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
   # ── macOS 双架构 .dmg（ARM64 + x86_64） ──

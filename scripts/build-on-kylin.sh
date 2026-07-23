@@ -78,6 +78,48 @@ else
   exit 1
 fi
 
+# ── 下载 Ubuntu 22.04 的 libstdc++6（解决 GLIBCXX 版本不兼容） ──
+# webkit2gtk-4.1 的 deb 包依赖 GLIBCXX_3.4.29/3.4.30
+# 麒麟系统自带 libstdc++ 太旧，需要从 Ubuntu 22.04 提取新版打包进 AppImage
+echo ""
+echo -e "  ${YELLOW}下载 Ubuntu 22.04 libstdc++6（用于 AppImage 打包）...${NC}"
+LIBCPP_VER="12.3.0-1ubuntu1~22.04"
+LIBCPP_BASE="http://archive.ubuntu.com/ubuntu/pool/main/g/gcc-12"
+LIBCPP_DEB="libstdc++6_${LIBCPP_VER}_amd64.deb"
+LIBCPP_SAVE_DIR="/tmp/qrtext-libstdcxx"
+rm -rf "$LIBCPP_SAVE_DIR"
+mkdir -p "$LIBCPP_SAVE_DIR"
+
+cd /tmp
+if wget -q "${LIBCPP_BASE}/${LIBCPP_DEB}"; then
+  # 提取 deb 中的 libstdc++.so.6.0.30
+  dpkg-deb -x "$LIBCPP_DEB" "$LIBCPP_SAVE_DIR"
+  LIBCPP_FILE=$(find "$LIBCPP_SAVE_DIR" -name "libstdc++.so.6*" -type f | head -1)
+  if [ -n "$LIBCPP_FILE" ] && [ -f "$LIBCPP_FILE" ]; then
+    GLIBCXX_MAX=$(strings "$LIBCPP_FILE" | grep -oP 'GLIBCXX_\d+\.\d+\.\d+' | sort -Vu | tail -1)
+    echo -e "  ${GREEN}✓ libstdc++.so.6 已提取（最高版本: $GLIBCXX_MAX）${NC}"
+  else
+    echo -e "  ${RED}✗ 提取 libstdc++ 失败${NC}"
+  fi
+  rm -f "$LIBCPP_DEB"
+else
+  echo -e "  ${YELLOW}⚠ 下载 libstdc++6 失败，将尝试使用系统版本${NC}"
+fi
+cd -
+
+# 同时下载 libgcc-s1（提供 libgcc_s.so.1，有时也需要）
+echo -e "  ${YELLOW}下载 Ubuntu 22.04 libgcc-s1...${NC}"
+LIBGCC_DEB="libgcc-s1_${LIBCPP_VER}_amd64.deb"
+cd /tmp
+if wget -q "${LIBCPP_BASE}/${LIBGCC_DEB}"; then
+  dpkg-deb -x "$LIBGCC_DEB" "$LIBCPP_SAVE_DIR"
+  rm -f "$LIBGCC_DEB"
+  echo -e "  ${GREEN}✓ libgcc_s.so.1 已提取${NC}"
+else
+  echo -e "  ${YELLOW}⚠ 下载 libgcc-s1 失败（非致命）${NC}"
+fi
+cd -
+
 # GTK / 图形库依赖
 sudo apt-get install -y --no-install-recommends \
   libgtk-3-dev \

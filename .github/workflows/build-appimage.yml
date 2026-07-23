@@ -1,14 +1,14 @@
 # ═══════════════════════════════════════════════════════════════
 #  GitHub Actions：构建 AppImage → 麒麟离线部署
 #
-#  关键设计：
-#    - 使用 ubuntu:20.04 容器构建 → glibc 2.31（兼容麒麟 V10 SP1）
-#    - webkit2gtk-4.1 从 Ubuntu 22.04 下载（麒麟无此包）
-#    - libstdc++ 从 Ubuntu 22.04 提取并打入 AppImage（解决 GLIBCXX 版本）
-#
 #  触发方式：
 #    - 推送 tag v* 时自动构建 + 发布 Release
 #    - 手动在 Actions 页面触发（workflow_dispatch）
+#
+#  产物：兼容麒麟 SP1 V10 的 AppImage
+#        - webkit2gtk-4.1 已打包（Tauri 自动处理）
+#        - libstdc++.so.6 已打入（patch-appimage.sh，含 GLIBCXX_3.4.30）
+#        - AppRun 解释器路径已修正为标准 /lib64/
 # ═══════════════════════════════════════════════════════════════
 name: Build AppImage
 
@@ -21,19 +21,25 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    container:
-      image: ubuntu:20.04
-    env:
-      DEBIAN_FRONTEND: noninteractive
-      TZ: Asia/Shanghai
     steps:
-      # ── 0. 容器内安装基础工具 ──
-      - name: 安装系统基础依赖
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装系统依赖
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            curl wget ca-certificates gnupg \
-            build-essential pkg-config \
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
@@ -43,59 +49,8 @@ jobs:
             libdbus-1-dev \
             patchelf \
             squashfs-tools \
-            file \
-            git \
-            xz-utils
-          apt-get clean
+            file
 
-      # ── 1. 安装 webkit2gtk-4.1（从 Ubuntu 22.04 下载） ──
-      - name: 安装 webkit2gtk-4.1（从 Ubuntu 22.04 deb）
-        run: |
-          JWKIT_VER="2.48.1-0ubuntu0.22.04.1"
-          JWKIT_BASE="http://archive.ubuntu.com/ubuntu/pool/universe/w/webkit2gtk"
-          cd /tmp
-          for pkg in \
-            "libjavascriptcoregtk-4.1-0_${JWKIT_VER}_amd64.deb" \
-            "libwebkit2gtk-4.1-0_${JWKIT_VER}_amd64.deb" \
-            "libjavascriptcoregtk-4.1-dev_${JWKIT_VER}_amd64.deb" \
-            "libwebkit2gtk-4.1-dev_${JWKIT_VER}_amd64.deb"; do
-            wget -q "${JWKIT_BASE}/${pkg}" && dpkg -i "$pkg" 2>/dev/null || echo "  跳过 $pkg"
-          done
-          apt-get install -f -y --no-install-recommends
-          rm -f /tmp/*.deb
-          pkg-config --exists webkit2gtk-4.1 && echo "✓ webkit2gtk-4.1 就绪"
-
-      # ── 2. 预下载 Ubuntu 22.04 libstdc++6 ──
-      - name: 预下载 libstdc++6（含 GLIBCXX_3.4.30）
-        run: |
-          mkdir -p /tmp/qrtext-libstdcxx
-          cd /tmp
-          LIBCPP_VER="12.3.0-1ubuntu1~22.04"
-          LIBCPP_BASE="http://archive.ubuntu.com/ubuntu/pool/main/g/gcc-12"
-          wget -q "${LIBCPP_BASE}/libstdc++6_${LIBCPP_VER}_amd64.deb"
-          dpkg-deb -x "libstdc++6_${LIBCPP_VER}_amd64.deb" /tmp/qrtext-libstdcxx
-          rm -f "libstdc++6_${LIBCPP_VER}_amd64.deb"
-          wget -q "${LIBCPP_BASE}/libgcc-s1_${LIBCPP_VER}_amd64.deb"
-          dpkg-deb -x "libgcc-s1_${LIBCPP_VER}_amd64.deb" /tmp/qrtext-libstdcxx
-          rm -f "libgcc-s1_${LIBCPP_VER}_amd64.deb"
-          echo "✓ libstdc++ 预下载完成 (GLIBCXX_3.4.30)"
-
-      # ── 3. Node.js 22 ──
-      - name: 安装 Node.js 22
-        run: |
-          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-          apt-get install -y nodejs
-          node -v && npm -v
-
-      # ── 4. Rust ──
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # ── 5. 检出 ──
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      # ── 6. 构建 ──
       - name: 安装 npm 依赖
         run: npm ci
 
@@ -105,28 +60,23 @@ jobs:
       - name: 构建 Tauri AppImage
         run: npx tauri build --bundles appimage
 
-      # ── 7. 检查 glibc 兼容性 ──
-      - name: 检查 glibc 版本要求
+      - name: 检查 glibc 兼容性（麒麟 ≈ 2.28~2.31）
         run: |
           BIN="src-tauri/target/release/qrtext"
-          echo "=== 二进制链接的 glibc 符号（最高版本决定最低要求）==="
-          MAX_GLIBC=$(objdump -T "$BIN" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -1)
+          echo "=== 二进制链接的 glibc 符号 ==="
           objdump -T "$BIN" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -5
+          MAX_GLIBC=$(objdump -T "$BIN" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -1)
           echo ""
-          echo "最高要求: $MAX_GLIBC"
-          echo "构建容器: ubuntu:20.04 (glibc 2.31)"
-          echo "麒麟 V10 SP1: glibc ≈ 2.28~2.31"
-          if echo "$MAX_GLIBC" | grep -qE "GLIBC_2\.(3[2-9]|[4-9][0-9])"; then
+          echo "最高要求: $MAX_GLIBC  (麒麟 ≈ GLIBC_2.28~2.31)"
+          if echo "$MAX_GLIBC" | grep -qE 'GLIBC_2\.(3[2-9]|[4-9][0-9])'; then
             echo "::warning::需要 glibc >= 2.32，麒麟可能不兼容！"
           else
             echo "✓ glibc 版本兼容麒麟"
           fi
 
-      # ── 8. 修补 ──
-      - name: 修补 AppImage（打入 libstdc++ + 修正 AppRun）
+      - name: 修补 AppImage（打入 libstdc++ + 修正 AppRun + 修正 RPATH）
         run: bash scripts/patch-appimage.sh
 
-      # ── 9. 最终验证 ──
       - name: 最终验证
         run: |
           APPIMAGE=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
@@ -134,13 +84,14 @@ jobs:
           echo "大小: $(du -h "$APPIMAGE" | cut -f1)"
           chmod +x "$APPIMAGE"
           "$APPIMAGE" --appimage-extract >/dev/null 2>&1
-          echo "=== 内部 libstdc++ 版本 ==="
+          echo ""
+          echo "=== 内部 libstdc++ ==="
           strings squashfs-root/usr/lib/libstdc++.so.6 2>/dev/null | grep GLIBCXX | tail -3
+          echo ""
           echo "=== 二进制 glibc 需求 ==="
           objdump -T squashfs-root/usr/bin/qrtext 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -3
           rm -rf squashfs-root
 
-      # ── 10. 上传 ──
       - name: 上传 AppImage 产物
         uses: actions/upload-artifact@v4
         with:

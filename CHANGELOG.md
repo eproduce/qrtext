@@ -19,6 +19,17 @@
 
 
 
+
+## 0.4.0 (2026-07-23)
+
+- fix: 验证改为直接检查 AppDir，不再提取 AppImage
+- fix: 验证步骤改用 unsquashfs + 逐文件检查，避免 ls glob 失败退出
+- fix: Dockerfile 中提取 AppImage 工具，绕过 Docker 无 FUSE 问题
+- fix: AppImage 改用 RPATH($ORIGIN) 代替 LD_LIBRARY_PATH+ld-linux
+- docs: 说明为何用 ubuntu:22.04 构建但仍兼容麒麟 glibc 2.28
+- refactor(ci): build-linux 改用 Docker 构建，CI 与本地完全一致
+- refactor(ci): 合并麒麟AppImage到build.yml，增加rpm包
+- feat: 麒麟兼容性硬检查 + 本地诊断脚本
 ## 0.4.0 (2026-07-23)
 
 - fix: 修复 AppImage 重新打包时 squashfs offset 误检测和验证 segfault

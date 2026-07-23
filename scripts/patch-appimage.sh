@@ -133,7 +133,7 @@ if [ -z "$LIBCPP_SRC" ]; then
     /usr/lib
     /lib/x86_64-linux-gnu
     /lib64
-    "$CONDA_PREFIX/lib"
+    "${CONDA_PREFIX:-}/lib"
     /usr/lib/gcc/x86_64-linux-gnu/11
     /usr/lib/gcc/x86_64-linux-gnu/12
     /usr/lib/gcc/x86_64-linux-gnu/13

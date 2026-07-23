@@ -78,28 +78,33 @@ for lib in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 \
   [ -n "$SRC" ] && cp -L "$SRC" "$APPDIR/usr/lib/" && echo "  ✓ $lib"
 done
 
-# patchelf：清除所有打包库的 RPATH → LD_LIBRARY_PATH 优先生效
-echo "清除 RPATH/RUNPATH..."
+# patchelf：给所有 .so 设置 RPATH = $ORIGIN（同目录优先查找依赖）
+# 这是关键——用 RPATH 代替 LD_LIBRARY_PATH，避免 dlopen 链路回退到系统路径
+echo "设置所有 .so 的 RPATH 为 \$ORIGIN..."
 find "$APPDIR/usr/lib" -name '*.so*' -type f | while IFS= read -r so; do
-  patchelf --remove-rpath "$so" 2>/dev/null || true
+  # 跳过非 ELF 文件
+  file "$so" 2>/dev/null | grep -q "ELF" || continue
+  # $ORIGIN: 优先同目录 → $ORIGIN/.. : 子目录中的 lib（如 x86_64-linux-gnu/）也能找到上层 lib
+  patchelf --set-rpath '$ORIGIN:$ORIGIN/..' "$so" 2>/dev/null || true
 done
+echo "  ✓ 所有 .so RPATH 已设为 \$ORIGIN:\$ORIGIN/.."
 
 echo "设置二进制 RPATH..."
 patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/../lib/x86_64-linux-gnu' \
          "$APPDIR/usr/bin/qrtext"
+echo "  ✓ 二进制 RPATH: \$ORIGIN/../lib"
 
-# AppRun：用自带的 ld-linux 直接启动，完全绕开系统动态链接器
+# AppRun：直接设置 LD_LIBRARY_PATH + exec 二进制（不再手动调 ld-linux）
+# RPATH 已经保证了优先查找自带库，LD_LIBRARY_PATH 作为兜底
 cat > "$APPDIR/AppRun" << 'APPRUN'
 #!/bin/bash
 export PATH="$APPDIR/usr/bin:$PATH"
-export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export GTK_PATH="$APPDIR/usr/lib/x86_64-linux-gnu/gtk-3.0"
 export GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"
 export GDK_PIXBUF_MODULE_FILE="$APPDIR/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
-exec "$APPDIR/usr/lib/ld-linux-x86-64.so.2" \
-  --library-path "$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu" \
-  "$APPDIR/usr/bin/qrtext" "$@"
+exec "$APPDIR/usr/bin/qrtext" "$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"
 
@@ -153,9 +158,10 @@ echo "自包含的 glibc 全家桶:"
 ls -la squashfs-root/usr/lib/libc.so* squashfs-root/usr/lib/libstdc++* squashfs-root/usr/lib/ld-linux* 2>/dev/null
 
 echo ""
-echo "AppRun 启动方式:"
-grep 'ld-linux' squashfs-root/AppRun 2>/dev/null | head -1
-echo "  ↑ 使用 AppImage 自带 ld-linux，绕开系统动态链接器"
+echo "AppRun 机制:"
+echo "  RPATH(\$ORIGIN) 优先 → LD_LIBRARY_PATH 兜底 → 不依赖系统 glibc"
+echo "  二进制 RPATH: \$ORIGIN/../lib"
+echo "  .so 文件 RPATH: \$ORIGIN（同目录互查）"
 
 LIBCPP_VER=$(strings squashfs-root/usr/lib/libstdc++.so.6 2>/dev/null | grep -oP 'GLIBCXX_\d+\.\d+\.\d+' | sort -Vu | tail -1)
 echo ""

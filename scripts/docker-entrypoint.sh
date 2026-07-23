@@ -140,43 +140,66 @@ echo ""
 echo "=== AppImage ==="
 ls -lh /workspace/src-tauri/target/release/bundle/appimage/ 2>/dev/null || echo "  (无)"
 
-# 验证 AppImage 内部 glibc
+# 验证 AppImage 内部内容（Docker 无 FUSE，直接用 unsquashfs）
 echo ""
-echo "=== AppImage 内部 glibc 验证 ==="
-"$DEST"/*.AppImage --appimage-extract >/dev/null 2>&1 || {
-  OFFSET=$(grep -abo 'hsqs' "$DEST"/*.AppImage | awk -F: '$1 > 131072 {print $1; exit}')
+echo "=== 提取 AppImage 验证 ==="
+OFFSET=$(grep -abo 'hsqs' "$DEST"/*.AppImage 2>/dev/null | awk -F: '$1 > 131072 {print $1; exit}')
+if [ -n "$OFFSET" ]; then
   dd if="$DEST"/*.AppImage bs=1 skip="$OFFSET" of=/tmp/v.squashfs status=none 2>/dev/null
-  unsquashfs -d squashfs-root /tmp/v.squashfs >/dev/null 2>&1
-}
+  rm -rf /tmp/v_extract
+  unsquashfs -d /tmp/v_extract /tmp/v.squashfs >/dev/null 2>&1
+  VDIR="/tmp/v_extract"
+else
+  echo "⚠ 无法提取 AppImage，跳过验证"
+  VDIR=""
+fi
 
-echo ""
-echo "════════════════════════════════════════════"
-echo "  AppImage 自包含验证"
-echo "════════════════════════════════════════════"
-echo ""
-echo "自包含的 glibc 全家桶:"
-ls -la squashfs-root/usr/lib/libc.so* squashfs-root/usr/lib/libstdc++* squashfs-root/usr/lib/ld-linux* 2>/dev/null
+if [ -n "$VDIR" ] && [ -d "$VDIR" ]; then
+  echo ""
+  echo "════════════════════════════════════════════"
+  echo "  AppImage 自包含验证"
+  echo "════════════════════════════════════════════"
+  echo ""
+  echo "usr/lib/ 完整目录（前30项）:"
+  ls "$VDIR/usr/lib/" 2>/dev/null | head -30 || echo "  (空)"
 
-echo ""
-echo "AppRun 机制:"
-echo "  RPATH(\$ORIGIN) 优先 → LD_LIBRARY_PATH 兜底 → 不依赖系统 glibc"
-echo "  二进制 RPATH: \$ORIGIN/../lib"
-echo "  .so 文件 RPATH: \$ORIGIN（同目录互查）"
+  echo ""
+  echo "关键 glibc 文件逐一检查:"
+  for f in libc.so.6 libstdc++.so.6 libstdc++.so.6.* libgcc_s.so.1 ld-linux-x86-64.so.2; do
+    if ls "$VDIR/usr/lib/$f" >/dev/null 2>&1; then
+      ls -la "$VDIR/usr/lib/$f" 2>/dev/null
+      echo "  ✓ $f"
+    else
+      echo "  ✗ $f 缺失"
+    fi
+  done || true
 
-LIBCPP_VER=$(strings squashfs-root/usr/lib/libstdc++.so.6 2>/dev/null | grep -oP 'GLIBCXX_\d+\.\d+\.\d+' | sort -Vu | tail -1)
-echo ""
-echo "自带 libstdc++: $LIBCPP_VER"
-echo "麒麟系统自带:   GLIBCXX_3.4.25 左右  ← 这就是之前报错的原因"
+  echo ""
+  echo "子目录: $(ls -d "$VDIR/usr/lib/"*/ 2>/dev/null | tr '
+' ' ' || echo '无')"
 
-GLIBC_VER=$(objdump -T squashfs-root/usr/bin/qrtext 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -1)
-BUNDLED_GLIBC=$(strings squashfs-root/usr/lib/libc.so.6 2>/dev/null | grep -oP 'GNU C Library.*release version \K[\d.]+' | head -1)
-echo ""
-echo "二进制最高 glibc 需求: $GLIBC_VER"
-echo "AppImage 自带 glibc:   $BUNDLED_GLIBC"
-echo "麒麟系统 glibc:        2.28 左右"
-echo "  ↑ 自带版本 ≥ 需求版本，完全不依赖系统 glibc"
+  LIBCPP_FILE=$(find "$VDIR/usr/lib" -name 'libstdc++.so*' -type f 2>/dev/null | head -1)
+  if [ -n "$LIBCPP_FILE" ]; then
+    LIBCPP_VER=$(strings "$LIBCPP_FILE" | grep -oP 'GLIBCXX_\d+\.\d+\.\d+' | sort -Vu | tail -1 || echo '?' )
+    echo ""
+    echo "自带 libstdc++: $LIBCPP_VER"
+    echo "麒麟系统自带:   GLIBCXX_3.4.25 左右"
+  else
+    echo ""
+    echo "⚠ 未找到 libstdc++.so！检查 linuxdeploy 是否收集了它"
+  fi
 
-rm -rf squashfs-root /tmp/v.squashfs
+  if [ -f "$VDIR/usr/bin/qrtext" ]; then
+    GLIBC_VER=$(objdump -T "$VDIR/usr/bin/qrtext" 2>/dev/null | grep -oP 'GLIBC_\d+\.\d+' | sort -Vu | tail -1 || echo '?' )
+    echo "二进制最高 glibc 需求: $GLIBC_VER"
+  fi
+
+  BUNDLED_GLIBC=$(strings "$VDIR/usr/lib/libc.so.6" 2>/dev/null | grep -oP 'release version \K[\d.]+' | head -1 || echo '?' )
+  echo "AppImage 自带 glibc:   $BUNDLED_GLIBC"
+  echo "麒麟系统 glibc:        2.28 左右"
+
+  rm -rf /tmp/v.squashfs /tmp/v_extract
+fi
 
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════${NC}"

@@ -20,6 +20,10 @@
 
 
 
+
+## 0.4.0 (2026-07-25)
+
+- fix: 麒麟 V10 SP1 AppImage 自包含优化 - 自带 ld-linux + WebProcess + GSettings
 ## 0.4.0 (2026-07-23)
 
 - fix: 验证改为直接检查 AppDir，不再提取 AppImage

@@ -78,6 +78,54 @@ for lib in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 \
   [ -n "$SRC" ] && cp -L "$SRC" "$APPDIR/usr/lib/" && echo "  ✓ $lib"
 done
 
+# ── 强制打入 WebKit WebProcess（webkit2gtk 子进程，缺它运行时报"找不到文件"）──
+echo ""
+echo "打入 WebKitWebProcess..."
+WEBPROC=$(find /usr/lib -name 'WebKitWebProcess' -type f 2>/dev/null | head -1)
+if [ -n "$WEBPROC" ]; then
+  mkdir -p "$APPDIR/usr/libexec"
+  cp -L "$WEBPROC" "$APPDIR/usr/libexec/WebKitWebProcess"
+  # 也放在 webkit2gtk 标准路径
+  WK_DIR=$(dirname "$WEBPROC")
+  mkdir -p "$APPDIR/$WK_DIR"
+  cp -L "$WEBPROC" "$APPDIR/$WK_DIR/"
+  echo "  ✓ WebKitWebProcess → usr/libexec/ + $WK_DIR/"
+fi
+
+WEBPROC_NET=$(find /usr/lib -name 'WebKitNetworkProcess' -type f 2>/dev/null | head -1)
+if [ -n "$WEBPROC_NET" ]; then
+  cp -L "$WEBPROC_NET" "$APPDIR/usr/libexec/"
+  echo "  ✓ WebKitNetworkProcess → usr/libexec/"
+fi
+
+# ── 打入 GSettings schemas（GDK/GTK 需要，缺它运行时报 GSettings 错误）──
+echo ""
+echo "编译 GSettings schemas..."
+SCHEMA_DIR=$(find /usr/share -name 'glib-2.0' -path '*/glib-2.0/schemas' -type d 2>/dev/null | head -1)
+if [ -n "$SCHEMA_DIR" ] && command -v glib-compile-schemas >/dev/null 2>&1; then
+  mkdir -p "$APPDIR/usr/share/glib-2.0/schemas"
+  cp "$SCHEMA_DIR"/*.xml "$APPDIR/usr/share/glib-2.0/schemas/" 2>/dev/null || true
+  glib-compile-schemas "$APPDIR/usr/share/glib-2.0/schemas/"
+  echo "  ✓ GSettings schemas 已编译"
+else
+  echo "  ⚠ 未找到 schemas，跳过"
+fi
+
+# ── 打入额外的 dlopen 依赖（web process sandbox、gstreamer 等）──
+echo ""
+echo "收集 dlopen 依赖..."
+for pattern in \
+  'libwebkit2gtk-4.1' \
+  'libjavascriptcoregtk-4.1' \
+  'libWPEBackend-fdo' \
+  'libwpe'; do
+  found=$(find /usr/lib -name "${pattern}*.so*" -type f 2>/dev/null)
+  for f in $found; do
+    dst="$APPDIR/usr/lib/$(basename "$f")"
+    [ ! -f "$dst" ] && cp -L "$f" "$dst" && echo "  ✓ $(basename "$f")"
+  done
+done
+
 # patchelf：给所有 .so 设置 RPATH = $ORIGIN（同目录优先查找依赖）
 # 这是关键——用 RPATH 代替 LD_LIBRARY_PATH，避免 dlopen 链路回退到系统路径
 echo "设置所有 .so 的 RPATH 为 \$ORIGIN..."
@@ -94,17 +142,54 @@ patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/../lib/x86_64-linux-gnu' \
          "$APPDIR/usr/bin/qrtext"
 echo "  ✓ 二进制 RPATH: \$ORIGIN/../lib"
 
-# AppRun：直接设置 LD_LIBRARY_PATH + exec 二进制（不再手动调 ld-linux）
-# RPATH 已经保证了优先查找自带库，LD_LIBRARY_PATH 作为兜底
+# AppRun：使用自带 ld-linux 启动（完全绕过麒麟系统 glibc 2.28）
+# 即使 RPATH 已设，系统 ld-linux 版本太旧会直接拒绝加载 → 必须自带
 cat > "$APPDIR/AppRun" << 'APPRUN'
 #!/bin/bash
-export PATH="$APPDIR/usr/bin:$PATH"
-export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export GTK_PATH="$APPDIR/usr/lib/x86_64-linux-gnu/gtk-3.0"
-export GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"
-export GDK_PIXBUF_MODULE_FILE="$APPDIR/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+HERE="$(dirname "$(readlink -f "$0")")"
+
+# 基础路径
+export PATH="$HERE/usr/bin:$PATH"
+
+# 最关键：用自带的 ld-linux 启动，绕过系统旧版 glibc
+LD_SO="$HERE/usr/lib/ld-linux-x86-64.so.2"
+if [ ! -f "$LD_SO" ]; then
+  # AppImage 运行时 ld-linux 路径可能不同，尝试自动查找
+  LD_SO=$(find "$HERE" -name 'ld-linux-x86-64.so*' -type f 2>/dev/null | head -1)
+fi
+
+# 库搜索路径
+LIB_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$LIB_PATH"
+
+# GTK / GDK
+export GTK_PATH="$HERE/usr/lib/x86_64-linux-gnu/gtk-3.0"
+export GDK_PIXBUF_MODULE_FILE="$HERE/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+export GDK_PIXBUF_MODULEDIR="$HERE/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders"
+
+# GIO / GLib
+export GIO_MODULE_DIR="$HERE/usr/lib/x86_64-linux-gnu/gio/modules"
+if [ -d "$HERE/usr/share/glib-2.0/schemas" ]; then
+  export GSETTINGS_SCHEMA_DIR="$HERE/usr/share/glib-2.0/schemas"
+fi
+
+# WebKit：告诉它去哪里找子进程（WebProcess/NetworkProcess）
+if [ -d "$HERE/usr/libexec" ]; then
+  export WEBKIT_EXEC_PATH="$HERE/usr/libexec"
+fi
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
-exec "$APPDIR/usr/bin/qrtext" "$@"
+
+# 自包含主题（防止麒麟系统缺 GTK 主题导致启动失败）
+export GTK_CSD=0
+export GTK_THEME=Default
+
+# 启动：用自带 ld-linux 执行
+if [ -f "$LD_SO" ]; then
+  exec "$LD_SO" --library-path "$LIB_PATH" "$HERE/usr/bin/qrtext" "$@"
+else
+  # 兜底：直接用系统 ld-linux（通常会在老系统上报 GLIBC 版本错误）
+  exec "$HERE/usr/bin/qrtext" "$@"
+fi
 APPRUN
 chmod +x "$APPDIR/AppRun"
 
@@ -173,8 +258,16 @@ echo ""
 echo "已打包 .so 文件总数: $(find "$LIB_DIR" -name '*.so*' -type f 2>/dev/null | wc -l)"
 
 echo ""
-echo "AppRun 前3行:"
-head -3 "$APPDIR/AppRun" 2>/dev/null || echo "  (无)"
+echo "自包含资产:"
+for asset in ld-linux-x86-64.so.2 libstdc++.so.6 libc.so.6 libgcc_s.so.1; do
+  ls "$LIB_DIR/$asset" 2>/dev/null && echo "  ✓ $asset" || echo "  ✗ $asset 缺失!"
+done
+echo "  WebKitWebProcess: $(find "$APPDIR" -name 'WebKitWebProcess' -type f 2>/dev/null | wc -l) 个"
+echo "  GSettings schemas: $(find "$APPDIR/usr/share/glib-2.0/schemas" -name 'gschemas.compiled' 2>/dev/null | wc -l) 个"
+
+echo ""
+echo "AppRun 前5行:"
+head -5 "$APPDIR/AppRun" 2>/dev/null || echo "  (无)"
 
 set -e
 
@@ -187,5 +280,5 @@ echo "  deb:  src-tauri/target/release/bundle/deb/"
 echo "  rpm:  src-tauri/target/release/bundle/rpm/"
 echo "  AppImage: src-tauri/target/release/bundle/appimage/"
 echo ""
-echo "  AppImage 自包含：ld-linux + libc 2.35 + libstdc++ 3.4.30"
-echo "  无需麒麟系统提供任何特定版本的库"
+echo "  AppImage 自包含：ld-linux 2.35 + libc + libstdc++ + WebKitWebProcess + GSettings"
+  echo "  麒麟 V10 SP1 可直接运行（FUSE 不可用时用 --appimage-extract-and-run）"

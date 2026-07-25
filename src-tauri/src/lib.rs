@@ -111,12 +111,19 @@ fn take_screenshot() -> Result<String, String> {
 
   #[cfg(target_os = "windows")]
   {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     Command::new("cmd")
       .args(["/c", "start", "/wait", "ms-screenclip:"])
+      .creation_flags(CREATE_NO_WINDOW)
       .status()
       .map_err(|_| "无法启动截图工具".to_string())?;
     let ps = r#"Add-Type -AssemblyName System.Windows.Forms;if([Windows.Forms.Clipboard]::ContainsImage()){[Windows.Forms.Clipboard]::GetImage().Save($env:TEMP+'\qrtext_screenshot.png','Png')}"#;
-    Command::new("powershell").args(["-Command", ps]).output().ok();
+    Command::new("powershell")
+      .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps])
+      .creation_flags(CREATE_NO_WINDOW)
+      .output()
+      .ok();
   }
 
   // 读取并返回 base64

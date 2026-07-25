@@ -74,7 +74,8 @@ DEPLOY_GTK_VERSION=3 linuxdeploy \
 echo "打入 glibc 全家桶..."
 for lib in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 \
            libstdc++.so.6 libgcc_s.so.1 ld-linux-x86-64.so.2; do
-  SRC=$(find /lib /usr/lib -name "$lib" -type f 2>/dev/null | head -1)
+  # 不用 -type f，因为 libstdc++.so.6 等可能是符号链接
+  SRC=$(find /lib /usr/lib -name "$lib" 2>/dev/null | head -1)
   [ -n "$SRC" ] && cp -L "$SRC" "$APPDIR/usr/lib/" && echo "  ✓ $lib"
 done
 

@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-dev \
     libsoup-3.0-dev \
     libglib2.0-dev \
+    gsettings-desktop-schemas \
     # 加密 / 系统
     libssl-dev libdbus-1-dev \
     # AppImage 工具

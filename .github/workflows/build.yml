@@ -26,8 +26,25 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: 安装依赖
-        run: npm ci
+      - name: Linux 依赖（AppImage/RPM 打包所需）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfuse2 \
+            rpm \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libxss1 \
+            libxtst6 \
+            xdg-utils \
+            libatspi2.0-0 \
+            libdrm2 \
+            libgbm1
+
+      - name: 安装依赖（用 install 因为 package.json 改了，lock 不同步）
+        run: npm install
 
       - name: 构建前端
         run: npx vite build
@@ -36,6 +53,7 @@ jobs:
         run: npx electron-builder --publish=never
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
       - name: 上传产物
         uses: actions/upload-artifact@v4

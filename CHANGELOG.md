@@ -23,6 +23,11 @@
 
 
 
+
+## 1.0.3 (2026-07-27)
+
+- fix: AppRun 不捆绑 ld-linux，改用系统 ld-linux + 完整 GTK/WebKit 环境变量
+- fix: AppRun 增加 APPDIR 自动检测，兼容直接提取运行
 ## 1.0.2 (2026-07-25)
 
 - fix: Windows 截图隐藏 PowerShell 窗口，消除卡顿

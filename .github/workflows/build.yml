@@ -10,120 +10,49 @@ on:
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
-  # ── Linux：Docker 容器构建 deb + rpm + 麒麟自包含 AppImage ──
-  build-linux:
-    runs-on: ubuntu-22.04
+  # ── 全平台构建（Electron + electron-builder） ──
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 构建 Docker 镜像
-        run: docker build -t qrtext-builder .
-
-      - name: Docker 内构建（deb + rpm + 麒麟 AppImage）
-        run: |
-          docker run --rm \
-            -v "$PWD":/workspace \
-            -v "$HOME/.cargo/registry:/root/.cargo/registry" \
-            qrtext-builder
-
-      - uses: actions/upload-artifact@v4
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
         with:
-          name: linux-packages
-          path: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/rpm/*.rpm
-            src-tauri/target/release/bundle/appimage/*.AppImage
-          if-no-files-found: error
+          node-version: '22'
+          cache: 'npm'
 
-  # ── macOS 双架构 .dmg（ARM64 + x86_64） ──
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - run: npm ci
-      - run: npx vite build
+      - name: 安装依赖
+        run: npm ci
 
-      - name: 构建 ARM64（Apple Silicon）
-        uses: tauri-apps/tauri-action@v0
+      - name: 构建前端
+        run: npx vite build
+
+      - name: 打包 Electron
+        run: npx electron-builder --publish=never
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: --bundles dmg --target aarch64-apple-darwin
 
-      - name: 构建 x86_64（Intel）
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
         with:
-          args: --bundles dmg --target x86_64-apple-darwin
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-packages
+          name: packages-${{ matrix.os }}
           path: |
-            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
-          if-no-files-found: error
-
-  # ── Windows 便携版 .zip ──
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
-      - run: npx vite build
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: --bundles nsis
-
-      - name: 制作绿色便携版 zip
-        shell: bash
-        run: |
-          # 直接从 Tauri 构建输出目录打包，不依赖 NSIS 提取
-          RELEASE_DIR="src-tauri/target/release"
-          mkdir -p QRTEXT-portable
-
-          cp "$RELEASE_DIR/qrtext.exe" QRTEXT-portable/
-          # 复制所有依赖 DLL
-          cp "$RELEASE_DIR"/*.dll QRTEXT-portable/ 2>/dev/null || true
-
-          # 验证 exe 存在
-          if [ -f "QRTEXT-portable/qrtext.exe" ]; then
-            ls -lh QRTEXT-portable/
-            7z a QRTEXT-portable.zip QRTEXT-portable/
-            mkdir -p "$RELEASE_DIR/bundle/zip"
-            cp QRTEXT-portable.zip "$RELEASE_DIR/bundle/zip/"
-            echo "✓ 便携版 zip 就绪"
-          else
-            echo "⚠ qrtext.exe 未找到"
-            exit 1
-          fi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-packages
-          path: |
-            src-tauri/target/release/bundle/nsis/*_x64-setup.exe
-            src-tauri/target/release/bundle/zip/*.zip
-          if-no-files-found: error
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.exe
+            release/*.zip
+          if-no-files-found: warn
 
   # ── 发布 Release ──
   release:
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -132,100 +61,55 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-
       - uses: actions/download-artifact@v4
         with:
           path: packages
           merge-multiple: true
 
-      # ── 自动 Release（标准 semver 版本号） ──
-      - name: 计算版本号 & 创建 Release
+      - name: 生成 CHANGELOG & 创建 Release
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           VER=$(node -p "require('./package.json').version")
+          SHA=$(git rev-parse --short=7 HEAD)
+          TAG="v${VER}-${SHA}"
+          echo "版本: ${VER}   commit: ${SHA}   tag: ${TAG}"
+
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
-          # 分析 commits 决定版本 bump 类型
-          BUMP="patch"
-          if [ -n "$LAST_TAG" ]; then
-            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s%n%b" --no-merges)
-            if echo "$COMMITS" | grep -qiE '(BREAKING[ -]CHANGE|^feat![:])'; then
-              BUMP="major"
-            elif echo "$COMMITS" | grep -qiE '^feat[(:]'; then
-              BUMP="minor"
-            fi
-            LAST_VER="${LAST_TAG#v}"
-          else
-            # 首个 tag，直接使用 package.json 版本
-            LAST_VER="$VER"
-          fi
-
-          # 计算新版本号
-          NEW_VER=$(node -e "
-            const [maj, min, pat] = '${LAST_VER}'.split('.').map(Number);
-            const b = '${BUMP}';
-            if (b === 'major') console.log(maj+1 + '.0.0');
-            else if (b === 'minor') console.log(maj + '.' + (min+1) + '.0');
-            else console.log(maj + '.' + min + '.' + (pat+1));
-          ")
-          TAG="v${NEW_VER}"
-          echo "版本: ${NEW_VER}  bump: ${BUMP}  tag: ${TAG}"
-
-          # 回写版本号到配置文件
-          node -e "
-            const p=require('./package.json');p.version='${NEW_VER}';
-            require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');
-            const c=require('./src-tauri/tauri.conf.json');c.version='${NEW_VER}';
-            require('fs').writeFileSync('src-tauri/tauri.conf.json',JSON.stringify(c,null,2)+'\n');
-          "
-
-          # 生成 CHANGELOG 条目
-          RANGE="${LAST_TAG:+${LAST_TAG}..}HEAD"
           TODAY=$(date +%Y-%m-%d)
-          {
-            echo ""
-            echo "## ${NEW_VER} (${TODAY})"
-            echo ""
-            git log ${RANGE} --pretty=format:"- %s" --no-merges 2>/dev/null || echo "- 自动构建"
-            echo ""
-          } >> /tmp/changelog-entry.md
 
-          # 插入到 CHANGELOG.md 顶部
+          # 更新 CHANGELOG
           TITLE_END=$(grep -n '^## ' CHANGELOG.md | head -1 | cut -d: -f1)
           TITLE_END=$((TITLE_END - 1))
           head -n $TITLE_END CHANGELOG.md > /tmp/new-changelog.md
-          cat /tmp/changelog-entry.md >> /tmp/new-changelog.md
+          {
+            echo ""
+            echo "## ${VER} (${TODAY})"
+            echo ""
+            echo "- 自动构建 (Electron)"
+            echo ""
+          } >> /tmp/new-changelog.md
           tail -n +$((TITLE_END + 1)) CHANGELOG.md >> /tmp/new-changelog.md
           mv /tmp/new-changelog.md CHANGELOG.md
 
-          # 更新 README
-          sed -i "s/当前版本：\*\*[0-9.]*\*\*/当前版本：**${NEW_VER}**/" README.md
+          sed -i "s/当前版本：\*\*[0-9.]*\*\*/当前版本：**${VER}**/" README.md
 
-          # 提交版本号变更 + tag
-          git add package.json src-tauri/tauri.conf.json CHANGELOG.md README.md
-          git commit -m "chore: release v${NEW_VER} [skip ci]" || echo "(无变更)"
+          git add CHANGELOG.md README.md
+          git commit -m "docs: update changelog for ${VER} [skip ci]" || echo "(无变更)"
           git push origin main
 
           git tag "${TAG}"
           git push origin "${TAG}"
 
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "version=${NEW_VER}" >> $GITHUB_OUTPUT
         id: bump
 
-      # ── 创建 GitHub Release ──
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.bump.outputs.tag }}
-          name: ${{ steps.bump.outputs.version }}
-          body_path: CHANGELOG.md
+          name: ${{ steps.bump.outputs.tag }}
           files: packages/**
           make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

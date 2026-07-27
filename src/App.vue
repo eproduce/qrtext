@@ -2,13 +2,13 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import QRCode from 'qrcode'
 import jsQR from 'jsqr'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { writeImage } from '@tauri-apps/plugin-clipboard-manager'
 import ScreenshotEditor from './components/ScreenshotEditor.vue'
 import ScreenshotHistory from './components/ScreenshotHistory.vue'
 import type { ScreenshotRecord } from './types'
+
+// Electron IPC
+const api = (window as any).electronAPI
+const isElectron = !!api
 
 declare const __APP_VERSION__: string
 const version = __APP_VERSION__
@@ -19,47 +19,32 @@ const pinImgSrc = isPinWindow ? decodeURIComponent(window.location.hash.substrin
 
 if (isPinWindow) {
   onMounted(() => {
-    // 双击关闭
-    document.addEventListener('dblclick', () => getCurrentWindow().close())
+    document.addEventListener('dblclick', () => isElectron && api.closeWindow())
   })
 }
 
-function pinClose() { getCurrentWindow().close() }
-function pinDragStart() { getCurrentWindow().startDragging() }
+function pinClose() { isElectron && api.closeWindow() }
+function pinDragStart() { /* Electron frameless window: CSS -webkit-app-region: drag */ }
 
 // ── 关于弹窗 ──
 const showAbout = ref(false)
-onMounted(async () => {
-  listen('show-about', () => { showAbout.value = true })
+onMounted(() => {
+  if (isElectron) {
+    api.onShowAbout(() => { showAbout.value = true })
+    api.onShowExitConfirm(() => { showExitConfirm.value = true })
+  }
 })
 
 // ── 窗口关闭拦截 ──
 const showExitConfirm = ref(false)
-let closingConfirmed = false
 
-async function confirmExit() {
-  closingConfirmed = true
+function confirmExit() {
   showExitConfirm.value = false
-  await getCurrentWindow().close()
+  if (isElectron) api.confirmExit()
 }
 
 function cancelExit() {
   showExitConfirm.value = false
-}
-
-if (!isPinWindow) {
-  getCurrentWindow().onCloseRequested(async (event) => {
-    if (closingConfirmed) return
-
-    event.preventDefault()
-
-    if (showEditor.value) {
-      showEditor.value = false
-      return
-    }
-
-    showExitConfirm.value = true
-  })
 }
 
 // ── 标签页 ──
@@ -81,10 +66,10 @@ function onEditorSave(dataUrl: string) {
   nextTick(() => decodeQR())
 }
 
-// ── 浮动截图（通过 Rust 创建系统级窗口） ──
+// ── 浮动截图 ──
 async function pinScreenshot(dataUrl: string) {
   try {
-    await invoke('pin_screenshot', { dataUrl })
+    if (isElectron) await api.pinScreenshot(dataUrl)
   } catch (e) {
     showToast('钉截图失败')
   }
@@ -224,27 +209,16 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
-// ── data URL 转 Uint8Array ──
-function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const base64 = dataUrl.split(',')[1]
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
-
 // ── 解码：系统框选截图 ──
 async function takeScreenshot() {
   try {
-    const dataUrl = await invoke<string>('take_screenshot')
+    if (!isElectron) {
+      showToast('截图功能仅在桌面应用中可用')
+      return
+    }
+    const dataUrl: string = await api.takeScreenshot()
     imageSrc.value = dataUrl
     addToHistory(dataUrl)
-    // 自动将截图写入系统剪贴板
-    try {
-      await writeImage(dataUrlToBytes(dataUrl))
-    } catch { /* 剪贴板写入失败不阻塞主流程 */ }
     await nextTick()
     decodeQR()
   } catch (err) {

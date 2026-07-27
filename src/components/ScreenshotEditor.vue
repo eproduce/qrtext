@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { writeImage } from '@tauri-apps/plugin-clipboard-manager'
 import type { DrawAction } from '../types'
 import { useDrawingTools } from '../composables/useDrawingTools'
 import { useHistory } from '../composables/useHistory'
@@ -143,8 +142,15 @@ async function copyToClipboard() {
   ctx.save(); ctx.scale(sx, sy); renderActions(ctx, actions.value, ctx); ctx.restore()
   try {
     const blob = await new Promise<Blob>((resolve) => c.toBlob((b) => resolve(b!), 'image/png'))
-    const buf = await blob.arrayBuffer()
-    await writeImage(new Uint8Array(buf))
+    const dataUrl = URL.createObjectURL(blob)
+    const api = (window as any).electronAPI
+    if (api) {
+      // 通过 Electron nativeImage 写入系统剪贴板
+      const reader = new FileReader()
+      reader.onload = () => api.writeClipboardImage(reader.result as string)
+      reader.readAsDataURL(blob)
+    }
+    URL.revokeObjectURL(dataUrl)
     copyFeedback.value = true
     if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
     copyFeedbackTimer = setTimeout(() => { copyFeedback.value = false }, 1800)

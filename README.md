@@ -24,71 +24,56 @@
 
 | 层 | 技术 |
 |----|------|
-| 桌面框架 | [Tauri 2](https://tauri.app/) |
+| 桌面框架 | [Electron 34](https://www.electronjs.org/) |
+| 打包工具 | [electron-builder](https://www.electron.build/) |
 | 前端 | Vue 3 + TypeScript + Vite |
-| 后端 | Rust |
 | 二维码解析 | [jsQR](https://github.com/cozmo/jsQR) |
 | 二维码生成 | [qrcode](https://github.com/soldair/node-qrcode) |
+
+> **2026-07 从 Tauri 2 迁移至 Electron**：解决麒麟 V10 SP1 / 国产 Linux 上 glibc 版本不兼容、Windows 7 不支持 WebView2 等跨平台兼容性问题。详见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 🚀 开发
 
 ### 环境要求
 
-- Node.js ≥ 22
-- Rust ≥ 1.77
-- **macOS**：完整 Xcode（非仅 Command Line Tools）
-- **Linux**：`libwebkit2gtk-4.1-dev` `libgtk-3-dev` 等
-- **Windows**：Microsoft Visual Studio C++ Build Tools
-
-### 启动
+- **Node.js** ≥ 22
+- **macOS / Windows / Linux** 均可
 
 ```bash
 # 安装依赖
 npm install
 
-# 启动开发模式
-npm run tauri:dev
+# macOS: 首次需要手动下载 Electron 二进制（npm install 的 postinstall 偶尔失败）
+ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" npm install electron
+# 然后解除 macOS 隔离
+xattr -cr node_modules/electron/dist/Electron.app
+```
+
+### 启动
+
+```bash
+npm run electron:dev
 ```
 
 ### 构建
 
 ```bash
-# 构建当前平台安装包
-npm run tauri:build
+npm run electron:build
 ```
 
 ## 📦 CI/CD
 
 Push 到 `main` 分支后，GitHub Actions 自动构建三平台包：
 
-- 🐧 Linux → `.deb` / `.AppImage`
+- 🐧 Linux → `.deb` / `.rpm` / `.AppImage`
 - 🍎 macOS → `.dmg`
-- 🪟 Windows → `.msi`
+- 🪟 Windows → `.exe` 安装包 / 绿色便携版
 
 构建产物可在 [Actions](https://github.com/eproduce/qrtext/actions) 页面的 Artifacts 中下载。
 
-## � 版本
+## 🔖 版本
 
 当前版本：**1.0.3**
 
-每次提交前自动升级版本号并生成 CHANGELOG：
-
-```bash
-npm run release          # patch 升级 (0.1.0 → 0.1.1)
-npm run release:minor    # minor 升级 (0.1.1 → 0.2.0)
-npm run release:major    # major 升级 (0.2.0 → 1.0.0)
-```
-
-脚本会自动：
-1. 升级 `package.json` 和 `tauri.conf.json` 版本号
-2. 从 git commit 记录生成 `CHANGELOG.md` 条目
-3. 提交并打 tag
-
-然后 `git push origin main --tags` 即可触发正式 Release。
-
 版本变更记录请查看 [CHANGELOG.md](./CHANGELOG.md)。
-
-## �📄 License
-
-MIT
 

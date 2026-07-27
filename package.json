@@ -40,7 +40,8 @@
     "productName": "QRTEXT",
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "icons/**/*"
     ],
     "directories": {
       "output": "release"

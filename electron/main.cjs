@@ -18,6 +18,7 @@ function createMainWindow() {
     minWidth: 480,
     minHeight: 400,
     title: 'QRTEXT',
+    icon: path.join(__dirname, '../icons/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

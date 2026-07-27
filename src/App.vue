@@ -537,7 +537,7 @@ const showDownload = computed(() => !!qrDataUrl.value)
           <h2 class="about-title">QRTEXT</h2>
           <p class="about-version">版本 {{ version }}</p>
           <p class="about-desc">跨平台二维码识别与生成工具</p>
-          <p class="about-tech">Tauri 2 · Vue 3 · Rust</p>
+          <p class="about-tech">Electron · Vue 3</p>
           <button class="btn-primary about-close" @click="showAbout = false">确定</button>
         </div>
       </div>

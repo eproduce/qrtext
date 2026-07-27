@@ -94,21 +94,50 @@ patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/../lib/x86_64-linux-gnu' \
          "$APPDIR/usr/bin/qrtext"
 echo "  ✓ 二进制 RPATH: \$ORIGIN/../lib"
 
-# AppRun：兼容 AppImage 运行时 和 直接提取后手动运行
+# AppRun：直接用系统 ld-linux（麒麟内核已验证兼容）+ RPATH 自动找自带库
+# 不再捆绑 ld-linux——glibc 2.35 的 ld-linux 在麒麟 4.19 内核上报段错误
 cat > "$APPDIR/AppRun" << 'APPRUN'
 #!/bin/bash
-# AppImage 运行时会自动设置 APPDIR；直接运行时从脚本位置推断
-if [ -z "${APPDIR:-}" ]; then
-  APPDIR="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+# 诊断模式：QRTEXT_DEBUG=1 ./QRTEXT-x86_64.AppImage
+if [ "${QRTEXT_DEBUG:-}" = "1" ]; then
+  echo "============================================"
+  echo " QRTEXT 诊断模式"
+  echo "============================================"
+  echo "APPDIR: $HERE"
+  echo "内核: $(uname -r)"
+  echo "glibc: $(/lib64/ld-linux-x86-64.so.2 --version 2>/dev/null | head -1 || ldd --version 2>/dev/null | head -1)"
+  echo ""
+  echo "--- ldd 依赖检查 ---"
+  LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu" ldd "$HERE/usr/bin/qrtext" 2>&1
+  echo "--- 结束 ---"
+  echo ""
 fi
-export APPDIR
-export PATH="$APPDIR/usr/bin:$PATH"
-export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export GTK_PATH="$APPDIR/usr/lib/x86_64-linux-gnu/gtk-3.0"
-export GIO_MODULE_DIR="$APPDIR/usr/lib/x86_64-linux-gnu/gio/modules"
-export GDK_PIXBUF_MODULE_FILE="$APPDIR/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+
+export PATH="$HERE/usr/bin:$PATH"
+export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# GTK / GDK
+export GTK_PATH="$HERE/usr/lib/x86_64-linux-gnu/gtk-3.0"
+export GTK_CSD=0
+export GTK_THEME=Default
+export GDK_PIXBUF_MODULEDIR="$HERE/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders"
+export GDK_PIXBUF_MODULE_FILE="$HERE/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+
+# GIO / GLib
+export GIO_MODULE_DIR="$HERE/usr/lib/x86_64-linux-gnu/gio/modules"
+if [ -d "$HERE/usr/share/glib-2.0/schemas" ]; then
+  export GSETTINGS_SCHEMA_DIR="$HERE/usr/share/glib-2.0/schemas"
+fi
+
+# WebKit
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
-exec "$APPDIR/usr/bin/qrtext" "$@"
+if [ -d "$HERE/usr/libexec" ]; then
+  export WEBKIT_EXEC_PATH="$HERE/usr/libexec"
+fi
+
+exec "$HERE/usr/bin/qrtext" "$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"
 

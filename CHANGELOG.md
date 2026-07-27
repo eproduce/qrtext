@@ -24,6 +24,11 @@
 
 
 
+
+## 1.0.3 (2026-07-27)
+
+- 自动构建 (Electron)
+
 ## 1.0.3 (2026-07-27)
 
 - fix: AppRun 不捆绑 ld-linux，改用系统 ld-linux + 完整 GTK/WebKit 环境变量

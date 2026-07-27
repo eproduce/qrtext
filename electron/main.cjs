@@ -19,7 +19,7 @@ function createMainWindow() {
     minHeight: 400,
     title: 'QRTEXT',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -180,7 +180,7 @@ ipcMain.handle('pin-screenshot', (_event, dataUrl) => {
     alwaysOnTop: true,
     skipTaskbar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },

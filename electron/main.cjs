@@ -17,6 +17,7 @@ function createMainWindow() {
     height: 600,
     minWidth: 480,
     minHeight: 400,
+    fullscreenable: true,
     title: 'QRTEXT',
     icon: path.join(__dirname, '../icons/icon.png'),
     webPreferences: {
@@ -24,6 +25,20 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  })
+
+  // Escape / F11 退出全屏
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow.webContents.executeJavaScript(`
+      if (!window._fullscreenEscBound) {
+        window._fullscreenEscBound = true
+        document.addEventListener('keydown', function(e) {
+          if (e.key === 'Escape' || e.key === 'F11') {
+            window.electronAPI.exitFullscreen()
+          }
+        })
+      }
+    `)
   })
 
   if (process.env.NODE_ENV === 'development') {
@@ -202,6 +217,10 @@ ipcMain.handle('pin-screenshot', (_event, dataUrl) => {
 
 ipcMain.on('close-window', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.close()
+})
+
+ipcMain.on('exit-fullscreen', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.setFullScreen(false)
 })
 
 // ── 剪贴板 ──

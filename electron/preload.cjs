@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── 确认退出 ──
   confirmExit: () => ipcRenderer.send('confirm-exit'),
 
+  // ── 退出全屏 ──
+  exitFullscreen: () => ipcRenderer.send('exit-fullscreen'),
+
   // ── 事件监听 ──
   onShowAbout: (callback) => ipcRenderer.on('show-about', callback),
   onShowExitConfirm: (callback) => ipcRenderer.on('show-exit-confirm', callback),

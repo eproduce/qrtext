@@ -66,6 +66,15 @@ async function generate() {
   }
 
   fs.rmSync(iconset, { recursive: true, force: true })
+
+  // ── 复制到 Electron icons/ 目录 ──
+  const ELECTRON_ICONS = path.join(__dirname, '..', 'icons')
+  fs.mkdirSync(ELECTRON_ICONS, { recursive: true })
+  fs.copyFileSync(path.join(ICONS_DIR, 'icon.png'), path.join(ELECTRON_ICONS, 'icon.png'))
+  fs.copyFileSync(path.join(ICONS_DIR, 'icon.icns'), path.join(ELECTRON_ICONS, 'icon.icns'))
+  fs.copyFileSync(path.join(ICONS_DIR, 'icon.ico'), path.join(ELECTRON_ICONS, 'icon.ico'))
+  console.log('  ✓ Electron icons synced to icons/')
+
   console.log('\n🎨 All icons generated!')
 }
 

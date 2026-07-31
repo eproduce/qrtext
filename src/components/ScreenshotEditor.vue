@@ -64,25 +64,62 @@ function handleMouseUp(e: MouseEvent) {
 const strokeWidths = [1, 2, 3, 4, 6, 8, 10, 12]
 const showWidthMenu = ref(false)
 
+// ── 自定义颜色选择器（避免 Linux 原生 picker 全黑问题）──
+const showColorPicker = ref(false)
+const presetColors = [
+  // 暖色系
+  '#ff3b30', '#ff6b6b', '#ff9500', '#ff9f0a', '#ffcc00', '#ffd60a',
+  // 冷色系
+  '#34c759', '#30d158', '#20bf6b', '#0a84ff', '#007aff', '#5856d6',
+  // 紫粉系
+  '#bf5af2', '#af52de', '#ff2d55', '#ff375f', '#ff6482', '#e84393',
+  // 大地色系
+  '#ac8e68', '#e17055', '#fdcb6e', '#00b894', '#74b9ff', '#a29bfe',
+  // 中性色
+  '#ffffff', '#f0f0f5', '#d1d1d6', '#aeaeb2', '#8e8e93', '#636366',
+  '#48484a', '#2c2c2e', '#1c1c1e', '#000000',
+]
+
+function hexToRgb(hex: string): string {
+  const h = hex.replace('#', '')
+  if (!/^[0-9A-Fa-f]{6}$/.test(h)) return ''
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+function recalcSize() {
+  if (!bgImage.value) return
+  const maxW = window.innerWidth * 0.9, maxH = window.innerHeight * 0.78
+  let dw = bgImage.value.naturalWidth, dh = bgImage.value.naturalHeight
+  if (dw > maxW || dh > maxH) { const r = Math.min(maxW / dw, maxH / dh); dw = Math.floor(dw * r); dh = Math.floor(dh * r) }
+  const cw = Math.min(bgImage.value.naturalWidth, dw * 2)
+  const ch = Math.min(bgImage.value.naturalHeight, dh * 2)
+  canvasSize.value = { w: cw, h: ch, displayW: dw, displayH: dh }
+}
+
+function onWindowResize() {
+  recalcSize()
+  nextTick(() => { drawImage(); redrawOverlay() })
+}
+
 onMounted(async () => {
   const img = new Image()
   img.onload = () => {
     bgImage.value = img
-    // 显示尺寸：适配窗口
-    const maxW = window.innerWidth * 0.9, maxH = window.innerHeight * 0.78
-    let dw = img.naturalWidth, dh = img.naturalHeight
-    if (dw > maxW || dh > maxH) { const r = Math.min(maxW / dw, maxH / dh); dw = Math.floor(dw * r); dh = Math.floor(dh * r) }
-    // 画布分辨率：取显示尺寸的 2x（Retina 清晰），但不超过原图
-    const cw = Math.min(img.naturalWidth, dw * 2)
-    const ch = Math.min(img.naturalHeight, dh * 2)
-    canvasSize.value = { w: cw, h: ch, displayW: dw, displayH: dh }
+    recalcSize()
     nextTick(() => { drawImage(); snapshot([]) })
   }
   img.src = props.imageSrc
   window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('resize', onWindowResize)
 })
 
-onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('resize', onWindowResize)
+})
 
 function drawImage() {
   const c = canvasRef.value; if (!c || !bgImage.value) return
@@ -183,10 +220,24 @@ async function saveImage() {
           <Icon :name="t.icon" class="tb-icon" />
         </button>
         <span class="tb-sep" />
-        <label class="color-picker-wrap" title="颜色">
-          <input type="color" v-model="strokeColor" class="color-picker" />
-          <span class="color-dot" :style="{ background: strokeColor }"></span>
-        </label>
+        <div class="color-picker-wrap" title="颜色">
+          <button class="tb-btn color-btn" @click="showColorPicker = !showColorPicker">
+            <span class="color-dot" :style="{ background: strokeColor }"></span>
+          </button>
+          <div v-if="showColorPicker" class="color-menu" @mouseleave="showColorPicker = false">
+            <div class="color-presets">
+              <button v-for="c in presetColors" :key="c"
+                :class="['color-swatch', { sel: strokeColor === c }]"
+                :style="{ background: c }" :title="c"
+                @click="strokeColor = c" />
+            </div>
+            <div class="color-info-row">
+              <span class="color-dot-info" :style="{ background: strokeColor }"></span>
+              <input v-model="strokeColor" class="hex-input" placeholder="#000000" maxlength="7" />
+              <span class="rgb-text">{{ hexToRgb(strokeColor) }}</span>
+            </div>
+          </div>
+        </div>
         <span class="tb-sep" />
         <div class="width-dropdown">
           <button class="tb-btn" @click="showWidthMenu = !showWidthMenu" title="线宽">
@@ -261,14 +312,46 @@ async function saveImage() {
 .tb-icon { width: 18px; height: 18px; }
 .tb-sep { width: 1px; height: 22px; background: rgba(255,255,255,0.1); }
 .color-picker-wrap {
-  position: relative; width: 36px; height: 36px;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; border-radius: 10px;
-  background: rgba(255,255,255,0.06);
+  position: relative;
 }
-.color-picker-wrap:hover { background: rgba(255,255,255,0.15); }
-.color-picker { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.color-btn {
+  background: rgba(255,255,255,0.06); border-radius: 10px;
+}
+.color-btn:hover { background: rgba(255,255,255,0.15); }
 .color-dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25); }
+.color-menu {
+  position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%);
+  background: rgba(28,28,30,0.98); border-radius: 12px;
+  padding: 10px 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  display: flex; flex-direction: column; gap: 10px; z-index: 20;
+}
+.color-presets {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px;
+}
+.color-swatch {
+  width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.15);
+  cursor: pointer; transition: transform .1s, border-color .1s;
+}
+.color-swatch:hover { transform: scale(1.15); border-color: rgba(255,255,255,0.5); }
+.color-swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.3); }
+.color-info-row {
+  display: flex; align-items: center; gap: 10px;
+  padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.08);
+}
+.color-dot-info {
+  width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+.hex-input {
+  width: 78px; padding: 4px 8px; border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px; background: rgba(255,255,255,0.06); color: #fff;
+  font-size: 13px; text-align: center; outline: none; font-family: monospace;
+}
+.hex-input:focus { border-color: rgba(255,255,255,0.4); }
+.rgb-text {
+  font-size: 12px; color: rgba(255,255,255,0.5);
+  font-family: monospace; white-space: nowrap;
+}
 .width-dropdown { position: relative; }
 .width-dot { display: block; background: #fff; border-radius: 50%; }
 .width-menu {

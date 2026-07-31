@@ -210,9 +210,20 @@ ipcMain.handle('write-clipboard-image', (_event, dataUrl) => {
   clipboard.writeImage(img)
 })
 
+// ── Dock 图标 (macOS) ──
+function setDockIcon() {
+  if (process.platform === 'darwin' && app.dock) {
+    const iconPath = path.join(__dirname, '../icons/icon.png')
+    if (fs.existsSync(iconPath)) {
+      app.dock.setIcon(iconPath)
+    }
+  }
+}
+
 // ── 应用启动 ──
 app.whenReady().then(() => {
   buildMenu()
+  setDockIcon()
   createMainWindow()
 
   app.on('activate', () => {

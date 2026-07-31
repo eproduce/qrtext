@@ -31,7 +31,13 @@ const showAbout = ref(false)
 onMounted(() => {
   if (isElectron) {
     api.onShowAbout(() => { showAbout.value = true })
-    api.onShowExitConfirm(() => { showExitConfirm.value = true })
+    api.onShowExitConfirm(() => {
+      if (showEditor.value) {
+        showEditor.value = false
+        return
+      }
+      showExitConfirm.value = true
+    })
   }
 })
 

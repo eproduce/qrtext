@@ -111,11 +111,14 @@ ipcMain.handle('take-screenshot', async () => {
 
   const buf = fs.readFileSync(tmpPath)
   fs.unlinkSync(tmpPath)
-  return `data:image/png;base64,${buf.toString('base64')}`
 
-  // 同时写入剪贴板
-  const img = nativeImage.createFromBuffer(buf)
-  clipboard.writeImage(img)
+  // 写入剪贴板
+  try {
+    const img = nativeImage.createFromBuffer(buf)
+    clipboard.writeImage(img)
+  } catch { /* 部分 Linux 桌面环境剪贴板不可用，静默忽略 */ }
+
+  return `data:image/png;base64,${buf.toString('base64')}`
 })
 
 function exec(cmd, args) {
@@ -128,31 +131,47 @@ function exec(cmd, args) {
 }
 
 async function linuxScreenshot(tmpPath) {
-  const tools = [
-    { cmd: 'ukui-screenshot', args: ['-a', '-s', '-o', tmpPath] },
-    { cmd: 'kylin-screenshot', args: ['-a', tmpPath] },
-    { cmd: 'gnome-screenshot', args: ['-a', '-f', tmpPath] },
-    { cmd: 'spectacle', args: ['-b', '-n', '-o', tmpPath] },
-    { cmd: 'xfce4-screenshooter', args: ['-r', '-s', tmpPath] },
-    { cmd: 'deepin-screenshot', args: ['-r', '-s', tmpPath] },
-    { cmd: 'flameshot', args: ['gui', '-r', '-p', tmpPath] },
-    { cmd: 'import', args: [tmpPath] },
-    { cmd: 'maim', args: ['-s', tmpPath] },
-    { cmd: 'scrot', args: ['-s', tmpPath] },
-  ]
+  // 检测 Wayland / X11 以优先匹配对应工具
+  const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY
+
+  const tools = isWayland
+    ? [
+        // Wayland：grim+slurp → flameshot → spectacle → gnome-screenshot
+        { cmd: 'sh', args: ['-c', `slurp -d -f '%x,%y %w,%h' | grim -g - "${tmpPath}"`] },
+        { cmd: 'flameshot', args: ['gui', '-p', tmpPath] },
+        { cmd: 'spectacle', args: ['-b', '-n', '-r', '-o', tmpPath] },
+        { cmd: 'gnome-screenshot', args: ['-a', '-f', tmpPath] },
+        { cmd: 'maim', args: ['-s', '-u', tmpPath] },
+        { cmd: 'import', args: [tmpPath] },
+      ]
+    : [
+        // X11：flameshot → gnome-screenshot → spectacle → maim → ...
+        { cmd: 'flameshot', args: ['gui', '-p', tmpPath] },
+        { cmd: 'gnome-screenshot', args: ['-a', '-f', tmpPath] },
+        { cmd: 'spectacle', args: ['-b', '-n', '-r', '-o', tmpPath] },
+        { cmd: 'xfce4-screenshooter', args: ['-r', '-s', tmpPath] },
+        { cmd: 'deepin-screenshot', args: ['-r', '-s', tmpPath] },
+        { cmd: 'maim', args: ['-s', '-u', tmpPath] },
+        { cmd: 'import', args: [tmpPath] },
+        { cmd: 'scrot', args: ['-s', tmpPath] },
+        { cmd: 'ukui-screenshot', args: ['-a', '-s', '-o', tmpPath] },
+        { cmd: 'kylin-screenshot', args: ['-a', tmpPath] },
+      ]
 
   for (const tool of tools) {
     try {
       await exec(tool.cmd, tool.args)
-      // 等待截图工具写入文件
-      await new Promise(r => setTimeout(r, 500))
-      if (fs.existsSync(tmpPath)) return
+      // 轮询等待文件写入，最多 1 秒（代替原来固定 500ms）
+      for (let i = 0; i < 20; i++) {
+        if (fs.existsSync(tmpPath)) return
+        await new Promise(r => setTimeout(r, 50))
+      }
     } catch { /* 工具不存在或用户取消，继续尝试下一个 */ }
   }
 
   throw new Error(
     '未找到截图工具。请安装以下任一：\n' +
-    'flameshot、gnome-screenshot、spectacle、maim、scrot、import (ImageMagick)'
+    'flameshot、gnome-screenshot、spectacle、grim+slurp、maim'
   )
 }
 

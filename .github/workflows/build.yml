@@ -49,7 +49,15 @@ jobs:
       - name: 构建前端
         run: npx vite build
 
-      - name: 打包 Electron
+      - name: 打包 Electron（Linux 含 ARM）
+        if: runner.os == 'Linux'
+        run: npx electron-builder --publish=never --linux --x64 --arm64 --armv7l
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+
+      - name: 打包 Electron（macOS / Windows）
+        if: runner.os != 'Linux'
         run: npx electron-builder --publish=never
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

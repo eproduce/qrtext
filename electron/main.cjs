@@ -97,12 +97,27 @@ function buildMenu() {
 ipcMain.handle('take-screenshot', async () => {
   const tmpPath = path.join(os.tmpdir(), `qrtext_screenshot_${Date.now()}.png`)
 
-  if (process.platform === 'darwin') {
-    await exec('screencapture', ['-i', '-x', tmpPath])
-  } else if (process.platform === 'linux') {
-    await linuxScreenshot(tmpPath)
-  } else if (process.platform === 'win32') {
-    await windowsScreenshot(tmpPath)
+  // Linux：截图前隐藏窗口，避免 Electron 窗口与截图工具 / 合成器冲突导致拖框卡顿
+  if (process.platform === 'linux' && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.minimize()
+    // 等待窗口管理器完成最小化动画
+    await new Promise(r => setTimeout(r, 200))
+  }
+
+  try {
+    if (process.platform === 'darwin') {
+      await exec('screencapture', ['-i', '-x', tmpPath])
+    } else if (process.platform === 'linux') {
+      await linuxScreenshot(tmpPath)
+    } else if (process.platform === 'win32') {
+      await windowsScreenshot(tmpPath)
+    }
+  } finally {
+    // 截图完成后恢复窗口
+    if (process.platform === 'linux' && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.restore()
+      mainWindow.focus()
+    }
   }
 
   if (!fs.existsSync(tmpPath)) {

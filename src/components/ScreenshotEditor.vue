@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import type { DrawAction } from '../types'
 import { useDrawingTools } from '../composables/useDrawingTools'
 import { useHistory } from '../composables/useHistory'
@@ -18,7 +18,6 @@ function onActionAdded() { snapshot(actions.value) }
 
 const {
   currentTool, strokeColor, strokeWidth,
-  isDrawing, currentPoints,
   onMouseDown, onMouseMove, onMouseUp,
   drawPreview, renderActions,
   tools,
@@ -139,11 +138,21 @@ function redrawOverlay() {
   renderActions(ctx, actions.value, bgCtx); drawPreview(ctx)
 }
 
-watch([actions, isDrawing, currentTool, strokeColor, currentPoints], () => nextTick(redrawOverlay), { deep: true })
+// ── rAF 节流：避免鼠标移动时重复绘制导致 Linux 下卡顿 ──
+let rafPending = false
+function scheduleRedraw() {
+  if (!rafPending) {
+    rafPending = true
+    requestAnimationFrame(() => {
+      rafPending = false
+      redrawOverlay()
+    })
+  }
+}
 
-// 鼠标事件：触发 composable 逻辑并立即重绘
-function handleMouseDown(e: MouseEvent) { onMouseDown(e); redrawOverlay() }
-function handleMouseMove(e: MouseEvent) { onMouseMove(e); redrawOverlay() }
+// 鼠标事件：触发 composable 逻辑并通过 rAF 节流重绘
+function handleMouseDown(e: MouseEvent) { onMouseDown(e); scheduleRedraw() }
+function handleMouseMove(e: MouseEvent) { onMouseMove(e); scheduleRedraw() }
 
 function onKeyDown(e: KeyboardEvent) {
   if (showTextInput.value) {

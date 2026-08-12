@@ -83,18 +83,32 @@
     // 接收主进程发来的屏幕预览数据，渲染各显示器截图
     api.onScreenshotData && api.onScreenshotData(function (data) {
       var displays = data.displays || []
+      if (displays.length === 0) {
+        api.screenshotReady && api.screenshotReady()
+        return
+      }
+      var pending = displays.length
       displays.forEach(function (d) {
-        var img = document.createElement('img')
+        var img = new Image()
         img.className = 'screen-img'
-        img.src = d.image
         img.style.left = d.x + 'px'
         img.style.top = d.y + 'px'
         img.style.width = d.width + 'px'
         img.style.height = d.height + 'px'
-        container.appendChild(img)
+        img.onload = function () {
+          container.appendChild(img)
+          if (--pending === 0) {
+            // 所有预览图加载完成后再通知主进程显示窗口
+            api.screenshotReady && api.screenshotReady()
+          }
+        }
+        img.onerror = function () {
+          if (--pending === 0) {
+            api.screenshotReady && api.screenshotReady()
+          }
+        }
+        img.src = d.image
       })
-      // 预览就绪后主动抓取鼠标
-      api.screenshotReady && api.screenshotReady()
     })
 
     function update() {

@@ -183,16 +183,20 @@ function customLinuxScreenshot() {
       maxY = Math.max(maxY, d.bounds.y + d.bounds.height)
     }
 
-    // 先捕获屏幕（选区前完成，避免选区结束后的捕获延迟）
+    // 并行：先创建选区窗口（不显示），同时捕获屏幕，缩短启动延迟
+    createSelectionWindow(minX, minY, maxX - minX, maxY - minY)
+
     captureAllDisplays()
       .then((captured) => {
         screenshotCapture = captured
-        createSelectionWindow(minX, minY, maxX - minX, maxY - minY)
+        sendPreviewData(captured)
       })
       .catch(() => {
         // 捕获失败 → 回退外部截图工具
         screenshotCapture = null
         screenshotResolver = null
+        if (screenshotWin && !screenshotWin.isDestroyed()) screenshotWin.close()
+        screenshotWin = null
         restoreMainWindow()
         resolve({ ok: false, cancelled: false })
       })
@@ -216,6 +220,8 @@ function createSelectionWindow(x, y, width, height) {
     hasShadow: false,
     fullscreenable: false,
     enableLargerThanScreen: true,
+    // 预览图就绪前不显示，避免一闪而过的黑屏
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -227,23 +233,9 @@ function createSelectionWindow(x, y, width, height) {
   screenshotWin.loadFile(path.join(__dirname, 'screenshot.html'))
 
   screenshotWin.webContents.once('did-finish-load', () => {
-    // 发送低分辨率预览数据给选区窗口
+    // 页面加载完成后，若捕获已完成则立即发送预览
     if (screenshotWin && !screenshotWin.isDestroyed() && screenshotCapture) {
-      const winBounds = screenshotWin.getBounds()
-      const preview = screenshotCapture.map((c) => {
-        const w = c.bounds.width
-        const h = c.bounds.height
-        const resized = c.nativeImage.resize({ width: w, height: h, quality: 'good' })
-        return {
-          x: c.bounds.x - winBounds.x,
-          y: c.bounds.y - winBounds.y,
-          width: w,
-          height: h,
-          image: 'data:image/png;base64,' + resized.toPNG().toString('base64'),
-        }
-      })
-      screenshotWin.webContents.send('screenshot-data', { displays: preview })
-      screenshotWin.focus()
+      sendPreviewData(screenshotCapture)
     }
   })
 
@@ -256,6 +248,28 @@ function createSelectionWindow(x, y, width, height) {
     screenshotWin = null
     screenshotCapture = null
   })
+}
+
+// 发送低分辨率预览数据给选区窗口
+function sendPreviewData(captured) {
+  if (!screenshotWin || screenshotWin.isDestroyed()) return
+  // 页面尚未加载完成，等待 did-finish-load 后再发送
+  if (screenshotWin.webContents.isLoading()) return
+
+  const winBounds = screenshotWin.getBounds()
+  const preview = captured.map((c) => {
+    const w = c.bounds.width
+    const h = c.bounds.height
+    const resized = c.nativeImage.resize({ width: w, height: h, quality: 'good' })
+    return {
+      x: c.bounds.x - winBounds.x,
+      y: c.bounds.y - winBounds.y,
+      width: w,
+      height: h,
+      image: 'data:image/png;base64,' + resized.toPNG().toString('base64'),
+    }
+  })
+  screenshotWin.webContents.send('screenshot-data', { displays: preview })
 }
 
 // 捕获所有显示器（原生分辨率）
@@ -337,6 +351,8 @@ ipcMain.on('screenshot-cancel', () => {
 
 ipcMain.on('screenshot-ready', () => {
   if (screenshotWin && !screenshotWin.isDestroyed()) {
+    // 预览图就绪后再显示窗口，避免黑屏闪烁
+    screenshotWin.show()
     screenshotWin.focus()
   }
 })

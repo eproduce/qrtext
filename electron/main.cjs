@@ -158,6 +158,7 @@ function writeImageToClipboard(dataUrl) {
 // ── 自研截图选区（Snipaste 式） ──
 let screenshotWin = null
 let screenshotResolver = null
+let screenshotCapture = null // 预捕获的显示器图像 [{ bounds, scaleFactor, nativeImage }]
 
 function customLinuxScreenshot() {
   return new Promise((resolve) => {
@@ -166,6 +167,11 @@ function customLinuxScreenshot() {
       return
     }
     screenshotResolver = resolve
+
+    // 截图前隐藏主窗口，避免其出现在捕获画面中
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide()
+    }
 
     // 计算所有显示器的包围盒（支持多屏，坐标可为负）
     const displays = screen.getAllDisplays()
@@ -177,55 +183,124 @@ function customLinuxScreenshot() {
       maxY = Math.max(maxY, d.bounds.y + d.bounds.height)
     }
 
-    screenshotWin = new BrowserWindow({
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-      transparent: true,
-      frame: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      movable: false,
-      hasShadow: false,
-      fullscreenable: false,
-      enableLargerThanScreen: true,
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.cjs'),
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    })
-    screenshotWin.setAlwaysOnTop(true, 'screen-saver')
-    screenshotWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-    screenshotWin.loadFile(path.join(__dirname, 'screenshot.html'))
-
-    screenshotWin.on('closed', () => {
-      if (screenshotResolver) {
-        const r = screenshotResolver
+    // 先捕获屏幕（选区前完成，避免选区结束后的捕获延迟）
+    captureAllDisplays()
+      .then((captured) => {
+        screenshotCapture = captured
+        createSelectionWindow(minX, minY, maxX - minX, maxY - minY)
+      })
+      .catch(() => {
+        // 捕获失败 → 回退外部截图工具
+        screenshotCapture = null
         screenshotResolver = null
-        r({ ok: false, cancelled: true })
-      }
-      screenshotWin = null
-    })
+        restoreMainWindow()
+        resolve({ ok: false, cancelled: false })
+      })
+  })
+}
 
-    // 截图前隐藏主窗口，避免遮挡选区
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.hide()
+function createSelectionWindow(x, y, width, height) {
+  screenshotWin = new BrowserWindow({
+    x,
+    y,
+    width,
+    height,
+    // 不透明窗口：显示截图预览，避免透明窗口在部分 Linux 桌面变黑
+    transparent: false,
+    backgroundColor: '#000000',
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    hasShadow: false,
+    fullscreenable: false,
+    enableLargerThanScreen: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  screenshotWin.setAlwaysOnTop(true, 'screen-saver')
+  screenshotWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  screenshotWin.loadFile(path.join(__dirname, 'screenshot.html'))
+
+  screenshotWin.webContents.once('did-finish-load', () => {
+    // 发送低分辨率预览数据给选区窗口
+    if (screenshotWin && !screenshotWin.isDestroyed() && screenshotCapture) {
+      const winBounds = screenshotWin.getBounds()
+      const preview = screenshotCapture.map((c) => {
+        const w = c.bounds.width
+        const h = c.bounds.height
+        const resized = c.nativeImage.resize({ width: w, height: h, quality: 'good' })
+        return {
+          x: c.bounds.x - winBounds.x,
+          y: c.bounds.y - winBounds.y,
+          width: w,
+          height: h,
+          image: 'data:image/png;base64,' + resized.toPNG().toString('base64'),
+        }
+      })
+      screenshotWin.webContents.send('screenshot-data', { displays: preview })
+      screenshotWin.focus()
     }
   })
+
+  screenshotWin.on('closed', () => {
+    if (screenshotResolver) {
+      const r = screenshotResolver
+      screenshotResolver = null
+      r({ ok: false, cancelled: true })
+    }
+    screenshotWin = null
+    screenshotCapture = null
+  })
+}
+
+// 捕获所有显示器（原生分辨率）
+async function captureAllDisplays() {
+  const displays = screen.getAllDisplays()
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    // 大尺寸请求 → 返回各显示器原生分辨率缩略图
+    thumbnailSize: { width: 8192, height: 8192 },
+  })
+  const captured = []
+  for (const d of displays) {
+    const source = sources.find((s) => s.display_id === String(d.id)) || sources[0]
+    if (!source || source.thumbnail.isEmpty()) continue
+    const img = nativeImage.createFromBuffer(source.thumbnail.toPNG())
+    captured.push({
+      bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
+      scaleFactor: d.scaleFactor || 1,
+      nativeImage: img,
+    })
+  }
+  if (captured.length === 0) throw new Error('no display captured')
+  return captured
+}
+
+function restoreMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show()
+    mainWindow.focus()
+  }
 }
 
 // 选区确认：relBounds 为选区窗口内相对坐标
 ipcMain.on('screenshot-select', async (_event, relBounds) => {
   const resolver = screenshotResolver
   const win = screenshotWin
+  const captured = screenshotCapture
   screenshotResolver = null
   screenshotWin = null
+  screenshotCapture = null
 
-  if (!win || !resolver || !relBounds) {
+  if (!win || !resolver || !relBounds || !captured) {
+    win && win.close()
     resolver && resolver({ ok: false, cancelled: false })
+    restoreMainWindow()
     return
   }
 
@@ -237,15 +312,11 @@ ipcMain.on('screenshot-select', async (_event, relBounds) => {
     h: relBounds.h,
   }
   win.close()
-
-  // 恢复主窗口
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show()
-    mainWindow.focus()
-  }
+  restoreMainWindow()
 
   try {
-    const dataUrl = await captureRegion(selection)
+    // 直接用预捕获的原生分辨率图像裁剪（内存操作，无捕获延迟）
+    const dataUrl = await cropFromCapture(captured, selection)
     resolver({ ok: true, dataUrl })
   } catch (e) {
     resolver({ ok: false, cancelled: false })
@@ -255,51 +326,45 @@ ipcMain.on('screenshot-select', async (_event, relBounds) => {
 ipcMain.on('screenshot-cancel', () => {
   const resolver = screenshotResolver
   screenshotResolver = null
+  screenshotCapture = null
   if (screenshotWin) {
     screenshotWin.close()
     screenshotWin = null
   }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show()
-    mainWindow.focus()
-  }
+  restoreMainWindow()
   resolver && resolver({ ok: false, cancelled: true })
 })
 
-// 按全局 DIP 坐标裁剪屏幕区域（多屏 + 不同缩放比适配）
-async function captureRegion(selection) {
-  const displays = screen.getAllDisplays()
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    // 大尺寸请求 → 返回各显示器原生分辨率缩略图
-    thumbnailSize: { width: 8192, height: 8192 },
-  })
+ipcMain.on('screenshot-ready', () => {
+  if (screenshotWin && !screenshotWin.isDestroyed()) {
+    screenshotWin.focus()
+  }
+})
 
+// 从预捕获图像中按全局 DIP 坐标裁剪（多屏 + 不同缩放比适配）
+async function cropFromCapture(captured, selection) {
   // 找出与选区相交的显示器
   const involved = []
-  for (const d of displays) {
-    const ix = Math.max(selection.x, d.bounds.x)
-    const iy = Math.max(selection.y, d.bounds.y)
-    const ix2 = Math.min(selection.x + selection.w, d.bounds.x + d.bounds.width)
-    const iy2 = Math.min(selection.y + selection.h, d.bounds.y + d.bounds.height)
+  for (const c of captured) {
+    const ix = Math.max(selection.x, c.bounds.x)
+    const iy = Math.max(selection.y, c.bounds.y)
+    const ix2 = Math.min(selection.x + selection.w, c.bounds.x + c.bounds.width)
+    const iy2 = Math.min(selection.y + selection.h, c.bounds.y + c.bounds.height)
     if (ix < ix2 && iy < iy2) {
-      involved.push(d)
+      involved.push(c)
     }
   }
   if (involved.length === 0) throw new Error('no display involved')
 
   // 单显示器：直接裁剪（含缩放比换算）
   if (involved.length === 1) {
-    const d = involved[0]
-    const source = sources.find((s) => s.display_id === String(d.id)) || sources[0]
-    if (!source || source.thumbnail.isEmpty()) throw new Error('no source')
-    const img = nativeImage.createFromBuffer(source.thumbnail.toPNG())
-    const thumbSize = img.getSize()
-    const scaleX = thumbSize.width / d.bounds.width
-    const scaleY = thumbSize.height / d.bounds.height
-    const cropped = img.crop({
-      x: Math.round((selection.x - d.bounds.x) * scaleX),
-      y: Math.round((selection.y - d.bounds.y) * scaleY),
+    const c = involved[0]
+    const size = c.nativeImage.getSize()
+    const scaleX = size.width / c.bounds.width
+    const scaleY = size.height / c.bounds.height
+    const cropped = c.nativeImage.crop({
+      x: Math.round((selection.x - c.bounds.x) * scaleX),
+      y: Math.round((selection.y - c.bounds.y) * scaleY),
       width: Math.round(selection.w * scaleX),
       height: Math.round(selection.h * scaleY),
     })
@@ -307,19 +372,13 @@ async function captureRegion(selection) {
   }
 
   // 多显示器：用离屏窗口合成
-  const displayData = []
-  for (const d of involved) {
-    const source = sources.find((s) => s.display_id === String(d.id))
-    if (!source || source.thumbnail.isEmpty()) continue
-    displayData.push({
-      x: d.bounds.x,
-      y: d.bounds.y,
-      width: d.bounds.width,
-      height: d.bounds.height,
-      image: 'data:image/png;base64,' + source.thumbnail.toPNG().toString('base64'),
-    })
-  }
-  if (displayData.length === 0) throw new Error('no source data')
+  const displayData = involved.map((c) => ({
+    x: c.bounds.x,
+    y: c.bounds.y,
+    width: c.bounds.width,
+    height: c.bounds.height,
+    image: 'data:image/png;base64,' + c.nativeImage.toPNG().toString('base64'),
+  }))
   return compositeDisplays(displayData, selection)
 }
 

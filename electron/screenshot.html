@@ -7,17 +7,24 @@
   html, body {
     width: 100%; height: 100%;
     overflow: hidden; cursor: crosshair;
-    background: transparent;
+    background: #000;
     user-select: none;
   }
 
-  /* Snipaste 式遮罩：4 个遮罩 div + 选区边框，全部走 GPU 合成层，
-     鼠标移动只更新 transform/宽高，不重绘整个屏幕 */
+  /* 屏幕截图预览：每个显示器一张 img，绝对定位到对应位置 */
+  #screenContainer { position: fixed; inset: 0; z-index: 1; }
+  .screen-img {
+    position: absolute; display: block;
+    -webkit-user-drag: none; pointer-events: none;
+  }
+
+  /* Snipaste 式遮罩：4 个遮罩 div + 选区边框，全部 GPU 合成层 */
   .mask {
     position: fixed;
     background: rgba(0, 0, 0, 0.45);
     will-change: transform;
     transform: translateZ(0);
+    z-index: 2;
   }
   .mask-top    { left: 0; top: 0; right: 0; }
   .mask-bottom { left: 0; bottom: 0; right: 0; }
@@ -31,6 +38,7 @@
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
     will-change: transform;
     transform: translateZ(0);
+    z-index: 3;
   }
 
   .size-label {
@@ -45,10 +53,12 @@
     pointer-events: none;
     will-change: transform;
     transform: translateZ(0);
+    z-index: 3;
   }
 </style>
 </head>
 <body>
+  <div id="screenContainer"></div>
   <div class="mask mask-top" id="maskTop"></div>
   <div class="mask mask-bottom" id="maskBottom"></div>
   <div class="mask mask-left" id="maskLeft"></div>
@@ -59,6 +69,7 @@
 <script>
   (function () {
     var api = window.electronAPI || {}
+    var container = document.getElementById('screenContainer')
     var maskTop = document.getElementById('maskTop')
     var maskBottom = document.getElementById('maskBottom')
     var maskLeft = document.getElementById('maskLeft')
@@ -69,13 +80,29 @@
     var startX = 0, startY = 0, curX = 0, curY = 0
     var drawing = false
 
+    // 接收主进程发来的屏幕预览数据，渲染各显示器截图
+    api.onScreenshotData && api.onScreenshotData(function (data) {
+      var displays = data.displays || []
+      displays.forEach(function (d) {
+        var img = document.createElement('img')
+        img.className = 'screen-img'
+        img.src = d.image
+        img.style.left = d.x + 'px'
+        img.style.top = d.y + 'px'
+        img.style.width = d.width + 'px'
+        img.style.height = d.height + 'px'
+        container.appendChild(img)
+      })
+      // 预览就绪后主动抓取鼠标
+      api.screenshotReady && api.screenshotReady()
+    })
+
     function update() {
       var x = Math.min(startX, curX)
       var y = Math.min(startY, curY)
       var w = Math.abs(curX - startX)
       var h = Math.abs(curY - startY)
 
-      // 四边遮罩：只用 transform + 宽高，GPU 合成
       maskTop.style.height = y + 'px'
       maskBottom.style.top = (y + h) + 'px'
       maskLeft.style.top = y + 'px'
@@ -85,13 +112,11 @@
       maskRight.style.left = (x + w) + 'px'
       maskRight.style.height = h + 'px'
 
-      // 选区边框
       selection.style.display = 'block'
       selection.style.transform = 'translate(' + x + 'px,' + y + 'px)'
       selection.style.width = w + 'px'
       selection.style.height = h + 'px'
 
-      // 尺寸标签
       sizeLabel.style.display = 'block'
       sizeLabel.textContent = Math.round(w) + ' × ' + Math.round(h)
       sizeLabel.style.transform = 'translate(' + x + 'px,' + (y > 22 ? y - 24 : y + h + 6) + 'px)'

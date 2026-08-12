@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── 截图选区窗口（自研选区页使用）──
   screenshotSelect: (bounds) => ipcRenderer.send('screenshot-select', bounds),
   screenshotCancel: () => ipcRenderer.send('screenshot-cancel'),
+  screenshotReady: () => ipcRenderer.send('screenshot-ready'),
+  onScreenshotData: (callback) => ipcRenderer.on('screenshot-data', (_e, data) => callback(data)),
 
   // ── 浮动截图 ──
   pinScreenshot: (dataUrl) => ipcRenderer.invoke('pin-screenshot', dataUrl),

@@ -2,7 +2,7 @@
 //  QRTEXT Electron 主进程
 //  Port from src-tauri/src/lib.rs
 // ═══════════════════════════════════════════════════════════════
-const { app, BrowserWindow, ipcMain, Menu, clipboard, nativeImage, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, clipboard, nativeImage, dialog, screen, desktopCapturer } = require('electron')
 const { execFile, spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
@@ -95,12 +95,24 @@ function buildMenu() {
 
 // ── 系统截图 ──
 ipcMain.handle('take-screenshot', async () => {
+  // Linux：优先使用自研选区（Snipaste 式顺滑渲染，多屏/多分辨率适配）
+  if (process.platform === 'linux') {
+    const result = await customLinuxScreenshot()
+    if (result.cancelled) {
+      throw new Error('截图已取消')
+    }
+    if (result.dataUrl) {
+      writeImageToClipboard(result.dataUrl)
+      return result.dataUrl
+    }
+    // 自研选区失败 → 回退外部截图工具
+  }
+
   const tmpPath = path.join(os.tmpdir(), `qrtext_screenshot_${Date.now()}.png`)
 
-  // Linux：截图前完全隐藏窗口（hide 比 minimize 更彻底，无动画延迟）
+  // 截图前完全隐藏窗口（hide 比 minimize 更彻底，无动画延迟）
   if (process.platform === 'linux' && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.hide()
-    // 等待合成器确认窗口已消失
     await new Promise(r => setTimeout(r, 300))
   }
 
@@ -135,6 +147,196 @@ ipcMain.handle('take-screenshot', async () => {
 
   return `data:image/png;base64,${buf.toString('base64')}`
 })
+
+function writeImageToClipboard(dataUrl) {
+  try {
+    const img = nativeImage.createFromDataURL(dataUrl)
+    clipboard.writeImage(img)
+  } catch { /* 部分 Linux 桌面环境剪贴板不可用，静默忽略 */ }
+}
+
+// ── 自研截图选区（Snipaste 式） ──
+let screenshotWin = null
+let screenshotResolver = null
+
+function customLinuxScreenshot() {
+  return new Promise((resolve) => {
+    if (screenshotWin) {
+      resolve({ ok: false, cancelled: false })
+      return
+    }
+    screenshotResolver = resolve
+
+    // 计算所有显示器的包围盒（支持多屏，坐标可为负）
+    const displays = screen.getAllDisplays()
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const d of displays) {
+      minX = Math.min(minX, d.bounds.x)
+      minY = Math.min(minY, d.bounds.y)
+      maxX = Math.max(maxX, d.bounds.x + d.bounds.width)
+      maxY = Math.max(maxY, d.bounds.y + d.bounds.height)
+    }
+
+    screenshotWin = new BrowserWindow({
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      transparent: true,
+      frame: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      movable: false,
+      hasShadow: false,
+      fullscreenable: false,
+      enableLargerThanScreen: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    })
+    screenshotWin.setAlwaysOnTop(true, 'screen-saver')
+    screenshotWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    screenshotWin.loadFile(path.join(__dirname, 'screenshot.html'))
+
+    screenshotWin.on('closed', () => {
+      if (screenshotResolver) {
+        const r = screenshotResolver
+        screenshotResolver = null
+        r({ ok: false, cancelled: true })
+      }
+      screenshotWin = null
+    })
+
+    // 截图前隐藏主窗口，避免遮挡选区
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide()
+    }
+  })
+}
+
+// 选区确认：relBounds 为选区窗口内相对坐标
+ipcMain.on('screenshot-select', async (_event, relBounds) => {
+  const resolver = screenshotResolver
+  const win = screenshotWin
+  screenshotResolver = null
+  screenshotWin = null
+
+  if (!win || !resolver || !relBounds) {
+    resolver && resolver({ ok: false, cancelled: false })
+    return
+  }
+
+  const winBounds = win.getBounds()
+  const selection = {
+    x: winBounds.x + relBounds.x,
+    y: winBounds.y + relBounds.y,
+    w: relBounds.w,
+    h: relBounds.h,
+  }
+  win.close()
+
+  // 恢复主窗口
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show()
+    mainWindow.focus()
+  }
+
+  try {
+    const dataUrl = await captureRegion(selection)
+    resolver({ ok: true, dataUrl })
+  } catch (e) {
+    resolver({ ok: false, cancelled: false })
+  }
+})
+
+ipcMain.on('screenshot-cancel', () => {
+  const resolver = screenshotResolver
+  screenshotResolver = null
+  if (screenshotWin) {
+    screenshotWin.close()
+    screenshotWin = null
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show()
+    mainWindow.focus()
+  }
+  resolver && resolver({ ok: false, cancelled: true })
+})
+
+// 按全局 DIP 坐标裁剪屏幕区域（多屏 + 不同缩放比适配）
+async function captureRegion(selection) {
+  const displays = screen.getAllDisplays()
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    // 大尺寸请求 → 返回各显示器原生分辨率缩略图
+    thumbnailSize: { width: 8192, height: 8192 },
+  })
+
+  // 找出与选区相交的显示器
+  const involved = []
+  for (const d of displays) {
+    const ix = Math.max(selection.x, d.bounds.x)
+    const iy = Math.max(selection.y, d.bounds.y)
+    const ix2 = Math.min(selection.x + selection.w, d.bounds.x + d.bounds.width)
+    const iy2 = Math.min(selection.y + selection.h, d.bounds.y + d.bounds.height)
+    if (ix < ix2 && iy < iy2) {
+      involved.push(d)
+    }
+  }
+  if (involved.length === 0) throw new Error('no display involved')
+
+  // 单显示器：直接裁剪（含缩放比换算）
+  if (involved.length === 1) {
+    const d = involved[0]
+    const source = sources.find((s) => s.display_id === String(d.id)) || sources[0]
+    if (!source || source.thumbnail.isEmpty()) throw new Error('no source')
+    const img = nativeImage.createFromBuffer(source.thumbnail.toPNG())
+    const thumbSize = img.getSize()
+    const scaleX = thumbSize.width / d.bounds.width
+    const scaleY = thumbSize.height / d.bounds.height
+    const cropped = img.crop({
+      x: Math.round((selection.x - d.bounds.x) * scaleX),
+      y: Math.round((selection.y - d.bounds.y) * scaleY),
+      width: Math.round(selection.w * scaleX),
+      height: Math.round(selection.h * scaleY),
+    })
+    return 'data:image/png;base64,' + cropped.toPNG().toString('base64')
+  }
+
+  // 多显示器：用离屏窗口合成
+  const displayData = []
+  for (const d of involved) {
+    const source = sources.find((s) => s.display_id === String(d.id))
+    if (!source || source.thumbnail.isEmpty()) continue
+    displayData.push({
+      x: d.bounds.x,
+      y: d.bounds.y,
+      width: d.bounds.width,
+      height: d.bounds.height,
+      image: 'data:image/png;base64,' + source.thumbnail.toPNG().toString('base64'),
+    })
+  }
+  if (displayData.length === 0) throw new Error('no source data')
+  return compositeDisplays(displayData, selection)
+}
+
+// 离屏合成窗口
+let compositeWin = null
+async function compositeDisplays(displayData, selection) {
+  if (!compositeWin || compositeWin.isDestroyed()) {
+    compositeWin = new BrowserWindow({
+      show: false,
+      webPreferences: { offscreen: true, contextIsolation: true, nodeIntegration: false },
+    })
+    await compositeWin.loadFile(path.join(__dirname, 'composite.html'))
+  }
+  return compositeWin.webContents.executeJavaScript(
+    `composite(${JSON.stringify(displayData)}, ${JSON.stringify(selection)})`
+  )
+}
 
 function exec(cmd, args) {
   return new Promise((resolve, reject) => {

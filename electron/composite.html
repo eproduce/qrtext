@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<body>
+<script>
+// 多屏合成：将多个显示器的截图按屏幕坐标拼合，裁剪出选区
+// displays: [{ x, y, width, height, image }]  (x/y/width/height 为 DIP，image 为原生分辨率 PNG dataURL)
+// selection: { x, y, w, h }  (全局 DIP 坐标)
+// 返回裁剪后的 PNG dataURL
+window.composite = function (displays, selection) {
+  return new Promise(function (resolve, reject) {
+    try {
+      var canvas = document.createElement('canvas')
+      var ctx = canvas.getContext('2d')
+
+      // 输出分辨率：按各显示器原生像素密度取最大 scale，保证清晰度
+      var maxScale = 1
+      displays.forEach(function (d) {
+        if (d.image) {
+          var img = new Image()
+          img.src = d.image
+          // 图片实际尺寸需在 onload 里读取，这里先占位
+        }
+      })
+
+      var loaded = 0
+      var images = {}
+      var nativeSizes = {}
+
+      function tryDraw() {
+        if (loaded < displays.length) return
+        // 计算每个显示器原生分辨率 → 确定 scale
+        displays.forEach(function (d) {
+          var key = d.x + ',' + d.y
+          var img = images[key]
+          if (img && d.width > 0) {
+            var s = img.naturalWidth / d.width
+            maxScale = Math.max(maxScale, s)
+          }
+        })
+        // 输出画布大小
+        var outW = Math.max(1, Math.round(selection.w * maxScale))
+        var outH = Math.max(1, Math.round(selection.h * maxScale))
+        canvas.width = outW
+        canvas.height = outH
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
+
+        displays.forEach(function (d) {
+          var key = d.x + ',' + d.y
+          var img = images[key]
+          if (!img) return
+          var s = d.width > 0 ? img.naturalWidth / d.width : 1
+          // 该显示器与选区的交集（DIP）
+          var ix = Math.max(selection.x, d.x)
+          var iy = Math.max(selection.y, d.y)
+          var ix2 = Math.min(selection.x + selection.w, d.x + d.width)
+          var iy2 = Math.min(selection.y + selection.h, d.y + d.height)
+          if (ix >= ix2 || iy >= iy2) return
+          // 源图裁剪区域（原生像素）
+          var sx = Math.round((ix - d.x) * s)
+          var sy = Math.round((iy - d.y) * s)
+          var sw = Math.round((ix2 - ix) * s)
+          var sh = Math.round((iy2 - iy) * s)
+          // 目标位置（输出画布，按 maxScale）
+          var dx = Math.round((ix - selection.x) * maxScale)
+          var dy = Math.round((iy - selection.y) * maxScale)
+          var dw = Math.round((ix2 - ix) * maxScale)
+          var dh = Math.round((iy2 - iy) * maxScale)
+          ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh)
+        })
+
+        resolve(canvas.toDataURL('image/png'))
+      }
+
+      if (displays.length === 0) { reject(new Error('no display')); return }
+
+      displays.forEach(function (d) {
+        var key = d.x + ',' + d.y
+        var img = new Image()
+        img.onload = function () {
+          images[key] = img
+          loaded++
+          tryDraw()
+        }
+        img.onerror = function () {
+          loaded++
+          tryDraw()
+        }
+        img.src = d.image
+      })
+    } catch (e) {
+      reject(e)
+    }
+  })
+}
+</script>
+</body>
+</html>

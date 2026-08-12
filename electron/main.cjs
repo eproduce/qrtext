@@ -97,11 +97,11 @@ function buildMenu() {
 ipcMain.handle('take-screenshot', async () => {
   const tmpPath = path.join(os.tmpdir(), `qrtext_screenshot_${Date.now()}.png`)
 
-  // Linux：截图前隐藏窗口，避免 Electron 窗口与截图工具 / 合成器冲突导致拖框卡顿
+  // Linux：截图前完全隐藏窗口（hide 比 minimize 更彻底，无动画延迟）
   if (process.platform === 'linux' && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.minimize()
-    // 等待窗口管理器完成最小化动画
-    await new Promise(r => setTimeout(r, 200))
+    mainWindow.hide()
+    // 等待合成器确认窗口已消失
+    await new Promise(r => setTimeout(r, 300))
   }
 
   try {
@@ -115,7 +115,7 @@ ipcMain.handle('take-screenshot', async () => {
   } finally {
     // 截图完成后恢复窗口
     if (process.platform === 'linux' && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.restore()
+      mainWindow.show()
       mainWindow.focus()
     }
   }
@@ -160,9 +160,9 @@ async function linuxScreenshot(tmpPath) {
         { cmd: 'import', args: [tmpPath] },
       ]
     : [
-        // X11：flameshot → gnome-screenshot → spectacle → maim → ...
-        { cmd: 'flameshot', args: ['gui', '-p', tmpPath] },
+        // X11：gnome-screenshot（GTK 原生选择框，不易撕裂）→ flameshot → spectacle → ...
         { cmd: 'gnome-screenshot', args: ['-a', '-f', tmpPath] },
+        { cmd: 'flameshot', args: ['gui', '-p', tmpPath] },
         { cmd: 'spectacle', args: ['-b', '-n', '-r', '-o', tmpPath] },
         { cmd: 'xfce4-screenshooter', args: ['-r', '-s', tmpPath] },
         { cmd: 'deepin-screenshot', args: ['-r', '-s', tmpPath] },

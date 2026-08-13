@@ -250,7 +250,7 @@ function createSelectionWindow(x, y, width, height) {
   })
 }
 
-// 发送低分辨率预览数据给选区窗口
+// 发送低分辨率预览数据给选区窗口（JPEG 编码，体积小传输快）
 function sendPreviewData(captured) {
   if (!screenshotWin || screenshotWin.isDestroyed()) return
   // 页面尚未加载完成，等待 did-finish-load 后再发送
@@ -266,19 +266,75 @@ function sendPreviewData(captured) {
       y: c.bounds.y - winBounds.y,
       width: w,
       height: h,
-      image: 'data:image/png;base64,' + resized.toPNG().toString('base64'),
+      image: 'data:image/jpeg;base64,' + resized.toJPEG(80).toString('base64'),
     }
   })
   screenshotWin.webContents.send('screenshot-data', { displays: preview })
 }
 
+// 计算所有显示器的虚拟桌面包围盒
+function getVirtualBounds(displays) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const d of displays) {
+    minX = Math.min(minX, d.bounds.x)
+    minY = Math.min(minY, d.bounds.y)
+    maxX = Math.max(maxX, d.bounds.x + d.bounds.width)
+    maxY = Math.max(maxY, d.bounds.y + d.bounds.height)
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+// 用 X11/Wayland 原生工具静默捕获整个虚拟桌面（远快于 desktopCapturer）
+async function tryNativeFullCapture() {
+  const tmpPath = path.join(os.tmpdir(), `qrtext_full_${Date.now()}.png`)
+  const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY
+  const tools = isWayland
+    ? [{ cmd: 'grim', args: [tmpPath] }]
+    : [
+        { cmd: 'import', args: ['-window', 'root', tmpPath] },
+        { cmd: 'maim', args: ['-u', tmpPath] },
+        { cmd: 'scrot', args: ['-o', tmpPath] },
+      ]
+  for (const tool of tools) {
+    try {
+      await exec(tool.cmd, tool.args)
+      if (fs.existsSync(tmpPath)) {
+        const img = nativeImage.createFromPath(tmpPath)
+        fs.unlinkSync(tmpPath)
+        if (!img.isEmpty()) return img
+      }
+    } catch { /* 工具不存在或失败，尝试下一个 */ }
+  }
+  return null
+}
+
 // 捕获所有显示器（原生分辨率）
 async function captureAllDisplays() {
   const displays = screen.getAllDisplays()
+  const box = getVirtualBounds(displays)
+
+  // 优先：原生工具捕获整个虚拟桌面，再按显示器边界裁剪
+  const fullImg = await tryNativeFullCapture()
+  if (fullImg) {
+    const size = fullImg.getSize()
+    const scaleX = size.width / box.width
+    const scaleY = size.height / box.height
+    return displays.map((d) => ({
+      bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
+      scaleFactor: d.scaleFactor || 1,
+      nativeImage: fullImg.crop({
+        x: Math.round((d.bounds.x - box.x) * scaleX),
+        y: Math.round((d.bounds.y - box.y) * scaleY),
+        width: Math.round(d.bounds.width * scaleX),
+        height: Math.round(d.bounds.height * scaleY),
+      }),
+    }))
+  }
+
+  // 回退：desktopCapturer
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    // 大尺寸请求 → 返回各显示器原生分辨率缩略图
-    thumbnailSize: { width: 8192, height: 8192 },
+    thumbnailSize: { width: box.width, height: box.height },
   })
   const captured = []
   for (const d of displays) {

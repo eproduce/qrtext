@@ -239,6 +239,8 @@ function clearDecode() {
   imageSrc.value = null
   decodedText.value = ''
   decodeError.value = ''
+  // 同时清空截图历史记录
+  historyRecords.value = []
 }
 
 // ── 复制 ──

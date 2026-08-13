@@ -82,6 +82,8 @@
 
     // 接收主进程发来的屏幕预览数据，渲染各显示器截图
     api.onScreenshotData && api.onScreenshotData(function (data) {
+      // 清空旧预览（窗口复用场景）
+      container.innerHTML = ''
       var displays = data.displays || []
       if (displays.length === 0) {
         api.screenshotReady && api.screenshotReady()

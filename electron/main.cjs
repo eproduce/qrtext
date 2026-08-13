@@ -162,7 +162,8 @@ let screenshotCapture = null // 预捕获的显示器图像 [{ bounds, scaleFact
 
 function customLinuxScreenshot() {
   return new Promise((resolve) => {
-    if (screenshotWin) {
+    // 已有进行中的截图（用 resolver 判断，窗口会常驻复用）
+    if (screenshotResolver) {
       resolve({ ok: false, cancelled: false })
       return
     }
@@ -175,16 +176,10 @@ function customLinuxScreenshot() {
 
     // 计算所有显示器的包围盒（支持多屏，坐标可为负）
     const displays = screen.getAllDisplays()
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const d of displays) {
-      minX = Math.min(minX, d.bounds.x)
-      minY = Math.min(minY, d.bounds.y)
-      maxX = Math.max(maxX, d.bounds.x + d.bounds.width)
-      maxY = Math.max(maxY, d.bounds.y + d.bounds.height)
-    }
+    const box = getVirtualBounds(displays)
 
-    // 并行：先创建选区窗口（不显示），同时捕获屏幕，缩短启动延迟
-    createSelectionWindow(minX, minY, maxX - minX, maxY - minY)
+    // 并行：确保选区窗口就绪（复用已创建的窗口），同时捕获屏幕
+    ensureSelectionWindow(box.x, box.y, box.width, box.height)
 
     captureAllDisplays()
       .then((captured) => {
@@ -195,15 +190,21 @@ function customLinuxScreenshot() {
         // 捕获失败 → 回退外部截图工具
         screenshotCapture = null
         screenshotResolver = null
-        if (screenshotWin && !screenshotWin.isDestroyed()) screenshotWin.close()
-        screenshotWin = null
+        hideSelectionWindow()
         restoreMainWindow()
         resolve({ ok: false, cancelled: false })
       })
   })
 }
 
-function createSelectionWindow(x, y, width, height) {
+// 确保选区窗口就绪：首次创建，后续复用（避免每次新建窗口的开销）
+function ensureSelectionWindow(x, y, width, height) {
+  if (screenshotWin && !screenshotWin.isDestroyed()) {
+    // 复用已创建的窗口：更新位置尺寸
+    screenshotWin.setBounds({ x, y, width, height })
+    return
+  }
+
   screenshotWin = new BrowserWindow({
     x,
     y,
@@ -240,14 +241,20 @@ function createSelectionWindow(x, y, width, height) {
   })
 
   screenshotWin.on('closed', () => {
+    screenshotWin = null
+    screenshotCapture = null
     if (screenshotResolver) {
       const r = screenshotResolver
       screenshotResolver = null
       r({ ok: false, cancelled: true })
     }
-    screenshotWin = null
-    screenshotCapture = null
   })
+}
+
+function hideSelectionWindow() {
+  if (screenshotWin && !screenshotWin.isDestroyed()) {
+    screenshotWin.hide()
+  }
 }
 
 // 发送低分辨率预览数据给选区窗口（JPEG 编码，体积小传输快）
@@ -297,21 +304,29 @@ function commandExists(cmd) {
   })
 }
 
+// 带超时的命令执行（防止交互式截图工具阻塞等待用户操作）
+function execWithTimeout(cmd, args, timeout) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout }, (err) => {
+      if (err) reject(err)
+      else resolve()
+    })
+  })
+}
+
 // 用 X11/Wayland 原生工具静默捕获整个虚拟桌面（远快于 desktopCapturer）
 async function tryNativeFullCapture() {
-  const tmpPath = path.join(os.tmpdir(), `qrtext_full_${Date.now()}.png`)
+  const tmpPath = path.join(os.tmpdir(), `qrtext_full_${Date.now()}.jpg`)
   const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY
   const candidates = isWayland
     ? [{ cmd: 'grim', args: [tmpPath] }]
     : [
-        { cmd: 'import', args: ['-window', 'root', tmpPath] },
+        // import 输出 JPEG（-strip 去掉元数据，quality 90），比 PNG 编码快得多
+        { cmd: 'import', args: ['-window', 'root', '-strip', '-quality', '90', tmpPath] },
         { cmd: 'maim', args: ['-u', tmpPath] },
         { cmd: 'scrot', args: ['-o', tmpPath] },
         { cmd: 'gnome-screenshot', args: ['-f', tmpPath] },
-        { cmd: 'mate-screenshot', args: ['-f', tmpPath] },
-        { cmd: 'xfce4-screenshooter', args: ['-f', '-s', tmpPath] },
-        { cmd: 'ukui-screenshot', args: ['-f', tmpPath] },
-        { cmd: 'kylin-screenshot', args: ['-f', tmpPath] },
+        { cmd: 'kylin-screenshot', args: [tmpPath] },
       ]
 
   // 并行检测工具是否存在，只调用可用的，避免逐个失败尝试的延迟
@@ -322,7 +337,8 @@ async function tryNativeFullCapture() {
 
   for (const tool of available) {
     try {
-      await exec(tool.cmd, tool.args)
+      // 1.5 秒超时：工具若是交互式/参数错误挂起，直接放弃换下一个
+      await execWithTimeout(tool.cmd, tool.args, 1500)
       if (fs.existsSync(tmpPath)) {
         const img = nativeImage.createFromPath(tmpPath)
         fs.unlinkSync(tmpPath)
@@ -395,11 +411,10 @@ ipcMain.on('screenshot-select', async (_event, relBounds) => {
   const win = screenshotWin
   const captured = screenshotCapture
   screenshotResolver = null
-  screenshotWin = null
   screenshotCapture = null
 
   if (!win || !resolver || !relBounds || !captured) {
-    win && win.close()
+    hideSelectionWindow()
     resolver && resolver({ ok: false, cancelled: false })
     restoreMainWindow()
     return
@@ -412,7 +427,8 @@ ipcMain.on('screenshot-select', async (_event, relBounds) => {
     w: relBounds.w,
     h: relBounds.h,
   }
-  win.close()
+  // 隐藏窗口（复用，下次截图无需重新创建）
+  hideSelectionWindow()
   restoreMainWindow()
 
   try {
@@ -428,10 +444,7 @@ ipcMain.on('screenshot-cancel', () => {
   const resolver = screenshotResolver
   screenshotResolver = null
   screenshotCapture = null
-  if (screenshotWin) {
-    screenshotWin.close()
-    screenshotWin = null
-  }
+  hideSelectionWindow()
   restoreMainWindow()
   resolver && resolver({ ok: false, cancelled: true })
 })

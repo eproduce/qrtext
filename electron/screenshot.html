@@ -80,10 +80,27 @@
     var startX = 0, startY = 0, curX = 0, curY = 0
     var drawing = false
 
+    // 重置选区遮罩、边框、标签到初始状态（窗口复用场景）
+    function resetOverlay() {
+      drawing = false
+      startX = 0; startY = 0; curX = 0; curY = 0
+      maskTop.style.height = '0px'
+      maskBottom.style.top = '100%'
+      maskLeft.style.top = '0px'
+      maskLeft.style.height = '0px'
+      maskLeft.style.width = '0px'
+      maskRight.style.top = '0px'
+      maskRight.style.left = '100%'
+      maskRight.style.height = '0px'
+      selection.style.display = 'none'
+      sizeLabel.style.display = 'none'
+    }
+
     // 接收主进程发来的屏幕预览数据，渲染各显示器截图
     api.onScreenshotData && api.onScreenshotData(function (data) {
-      // 清空旧预览（窗口复用场景）
+      // 清空旧预览与上次的选区状态（窗口复用场景）
       container.innerHTML = ''
+      resetOverlay()
       var displays = data.displays || []
       if (displays.length === 0) {
         api.screenshotReady && api.screenshotReady()

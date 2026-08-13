@@ -260,7 +260,11 @@ function sendPreviewData(captured) {
   const preview = captured.map((c) => {
     const w = c.bounds.width
     const h = c.bounds.height
-    const resized = c.nativeImage.resize({ width: w, height: h, quality: 'good' })
+    const size = c.nativeImage.getSize()
+    // 尺寸一致时跳过 resize，减少编码前的耗时
+    const resized = (size.width === w && size.height === h)
+      ? c.nativeImage
+      : c.nativeImage.resize({ width: w, height: h, quality: 'good' })
     return {
       x: c.bounds.x - winBounds.x,
       y: c.bounds.y - winBounds.y,
@@ -284,18 +288,39 @@ function getVirtualBounds(displays) {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
+// 快速检测命令是否存在（shell 内建 command -v）
+function commandExists(cmd) {
+  return new Promise((resolve) => {
+    execFile('sh', ['-c', `command -v "${cmd}" >/dev/null 2>&1`], (err) => {
+      resolve(!err)
+    })
+  })
+}
+
 // 用 X11/Wayland 原生工具静默捕获整个虚拟桌面（远快于 desktopCapturer）
 async function tryNativeFullCapture() {
   const tmpPath = path.join(os.tmpdir(), `qrtext_full_${Date.now()}.png`)
   const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY
-  const tools = isWayland
+  const candidates = isWayland
     ? [{ cmd: 'grim', args: [tmpPath] }]
     : [
         { cmd: 'import', args: ['-window', 'root', tmpPath] },
         { cmd: 'maim', args: ['-u', tmpPath] },
         { cmd: 'scrot', args: ['-o', tmpPath] },
+        { cmd: 'gnome-screenshot', args: ['-f', tmpPath] },
+        { cmd: 'mate-screenshot', args: ['-f', tmpPath] },
+        { cmd: 'xfce4-screenshooter', args: ['-f', '-s', tmpPath] },
+        { cmd: 'ukui-screenshot', args: ['-f', tmpPath] },
+        { cmd: 'kylin-screenshot', args: ['-f', tmpPath] },
       ]
-  for (const tool of tools) {
+
+  // 并行检测工具是否存在，只调用可用的，避免逐个失败尝试的延迟
+  const checks = await Promise.all(
+    candidates.map(async (tool) => ((await commandExists(tool.cmd)) ? tool : null))
+  )
+  const available = checks.filter(Boolean)
+
+  for (const tool of available) {
     try {
       await exec(tool.cmd, tool.args)
       if (fs.existsSync(tmpPath)) {
@@ -303,7 +328,7 @@ async function tryNativeFullCapture() {
         fs.unlinkSync(tmpPath)
         if (!img.isEmpty()) return img
       }
-    } catch { /* 工具不存在或失败，尝试下一个 */ }
+    } catch { /* 参数不支持等，尝试下一个 */ }
   }
   return null
 }
@@ -331,10 +356,16 @@ async function captureAllDisplays() {
     }))
   }
 
-  // 回退：desktopCapturer
+  // 回退：desktopCapturer（高分辨率屏降采样以加快捕获）
+  const maxDim = Math.max(box.width, box.height)
+  const cap = 2560
+  const ratio = maxDim > cap ? cap / maxDim : 1
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: { width: box.width, height: box.height },
+    thumbnailSize: {
+      width: Math.max(1, Math.round(box.width * ratio)),
+      height: Math.max(1, Math.round(box.height * ratio)),
+    },
   })
   const captured = []
   for (const d of displays) {

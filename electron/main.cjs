@@ -202,6 +202,10 @@ function ensureSelectionWindow(x, y, width, height) {
   if (screenshotWin && !screenshotWin.isDestroyed()) {
     // 复用已创建的窗口：更新位置尺寸
     screenshotWin.setBounds({ x, y, width, height })
+    // 重新提升层级：前一次截图之后可能有应用进入了全屏（多屏场景），
+    // 需确保选区窗口仍能盖过全屏应用
+    screenshotWin.setAlwaysOnTop(true, 'screen-saver')
+    screenshotWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
     return
   }
 
@@ -358,21 +362,31 @@ async function captureAllDisplays() {
   const fullImg = await tryNativeFullCapture()
   if (fullImg) {
     const size = fullImg.getSize()
-    const scaleX = size.width / box.width
-    const scaleY = size.height / box.height
-    return displays.map((d) => ({
-      bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
-      scaleFactor: d.scaleFactor || 1,
-      nativeImage: fullImg.crop({
-        x: Math.round((d.bounds.x - box.x) * scaleX),
-        y: Math.round((d.bounds.y - box.y) * scaleY),
-        width: Math.round(d.bounds.width * scaleX),
-        height: Math.round(d.bounds.height * scaleY),
-      }),
-    }))
+    if (size.width > 0 && size.height > 0) {
+      const scaleX = size.width / box.width
+      const scaleY = size.height / box.height
+      // 捕获尺寸与虚拟桌面不成比例（如 grim 只抓聚焦屏、全屏应用切换分辨率、
+      // 某屏幕独占捕获等）→ 视为不完整，丢弃回退到 desktopCapturer
+      const ratioDiff = Math.abs(scaleX - scaleY) / Math.max(scaleX, scaleY)
+      if (ratioDiff <= 0.1) {
+        return displays.map((d) => ({
+          bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
+          scaleFactor: d.scaleFactor || 1,
+          nativeImage: fullImg.crop({
+            x: Math.round((d.bounds.x - box.x) * scaleX),
+            y: Math.round((d.bounds.y - box.y) * scaleY),
+            width: Math.round(d.bounds.width * scaleX),
+            height: Math.round(d.bounds.height * scaleY),
+          }),
+        }))
+      }
+    }
   }
 
   // 回退：desktopCapturer（高分辨率屏降采样以加快捕获）
+  // 注意：Linux 下 PipeWire（Wayland）/ Xinerama（X11）常只返回单个
+  // 「整个虚拟桌面」source，而非每个显示器各一个 —— 多屏时必须按边界裁剪，
+  // 否则整张桌面图会被赋给每个显示器导致截图内容错位/重复。
   const maxDim = Math.max(box.width, box.height)
   const cap = 2560
   const ratio = maxDim > cap ? cap / maxDim : 1
@@ -383,18 +397,52 @@ async function captureAllDisplays() {
       height: Math.max(1, Math.round(box.height * ratio)),
     },
   })
+  const sourceImages = sources
+    .filter((s) => s && !s.thumbnail.isEmpty())
+    .map((s) => ({
+      id: s.display_id,
+      image: nativeImage.createFromBuffer(s.thumbnail.toPNG()),
+    }))
+  if (sourceImages.length === 0) throw new Error('no display captured')
+
   const captured = []
-  for (const d of displays) {
-    const source = sources.find((s) => s.display_id === String(d.id)) || sources[0]
-    if (!source || source.thumbnail.isEmpty()) continue
-    const img = nativeImage.createFromBuffer(source.thumbnail.toPNG())
-    captured.push({
-      bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
-      scaleFactor: d.scaleFactor || 1,
-      nativeImage: img,
-    })
+  if (sourceImages.length === 1) {
+    // 单个 source：整张虚拟桌面图 → 单屏直接使用，多屏按显示器边界裁剪
+    const virtual = sourceImages[0].image
+    if (displays.length === 1) {
+      captured.push({
+        bounds: { x: displays[0].bounds.x, y: displays[0].bounds.y, width: displays[0].bounds.width, height: displays[0].bounds.height },
+        scaleFactor: displays[0].scaleFactor || 1,
+        nativeImage: virtual,
+      })
+    } else {
+      const size = virtual.getSize()
+      const scaleX = size.width / box.width
+      const scaleY = size.height / box.height
+      for (const d of displays) {
+        captured.push({
+          bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
+          scaleFactor: d.scaleFactor || 1,
+          nativeImage: virtual.crop({
+            x: Math.round((d.bounds.x - box.x) * scaleX),
+            y: Math.round((d.bounds.y - box.y) * scaleY),
+            width: Math.round(d.bounds.width * scaleX),
+            height: Math.round(d.bounds.height * scaleY),
+          }),
+        })
+      }
+    }
+  } else {
+    // 多 source：按 display_id 精确匹配各显示器（Wayland 每输出一个 source）
+    for (const d of displays) {
+      const src = sourceImages.find((s) => s.id === String(d.id)) || sourceImages[0]
+      captured.push({
+        bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
+        scaleFactor: d.scaleFactor || 1,
+        nativeImage: src.image,
+      })
+    }
   }
-  if (captured.length === 0) throw new Error('no display captured')
   return captured
 }
 
@@ -451,7 +499,8 @@ ipcMain.on('screenshot-cancel', () => {
 
 ipcMain.on('screenshot-ready', () => {
   if (screenshotWin && !screenshotWin.isDestroyed()) {
-    // 预览图就绪后再显示窗口，避免黑屏闪烁
+    // 显示前再次提升窗口层级，确保盖过其它屏幕上的全屏应用
+    screenshotWin.moveTop()
     screenshotWin.show()
     screenshotWin.focus()
   }

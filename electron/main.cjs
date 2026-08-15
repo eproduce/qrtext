@@ -178,11 +178,13 @@ function customLinuxScreenshot() {
     const displays = screen.getAllDisplays()
     const box = getVirtualBounds(displays)
 
-    // 并行：确保选区窗口就绪（复用已创建的窗口），同时捕获屏幕
-    ensureSelectionWindow(box.x, box.y, box.width, box.height)
-
-    captureAllDisplays()
-      .then((captured) => {
+    // 并行：确保选区窗口就绪（复用已创建的窗口），同时捕获屏幕 ——
+    // 两者互不依赖，串行执行会白白叠加等待时间，是「开始截图卡顿」的主要来源
+    Promise.all([
+      ensureSelectionWindow(box.x, box.y, box.width, box.height),
+      captureAllDisplays(),
+    ])
+      .then(([, captured]) => {
         screenshotCapture = captured
         sendPreviewData(captured)
       })
@@ -199,59 +201,63 @@ function customLinuxScreenshot() {
 
 // 确保选区窗口就绪：首次创建，后续复用（避免每次新建窗口的开销）
 function ensureSelectionWindow(x, y, width, height) {
-  if (screenshotWin && !screenshotWin.isDestroyed()) {
-    // 复用已创建的窗口：更新位置尺寸
-    screenshotWin.setBounds({ x, y, width, height })
-    // 重新提升层级：前一次截图之后可能有应用进入了全屏（多屏场景），
-    // 需确保选区窗口仍能盖过全屏应用
+  return new Promise((resolve) => {
+    if (screenshotWin && !screenshotWin.isDestroyed()) {
+      // 复用已创建的窗口：更新位置尺寸
+      screenshotWin.setBounds({ x, y, width, height })
+      // 重新提升层级：前一次截图之后可能有应用进入了全屏（多屏场景），
+      // 需确保选区窗口仍能盖过全屏应用
+      screenshotWin.setAlwaysOnTop(true, 'screen-saver')
+      screenshotWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      resolve()
+      return
+    }
+
+    screenshotWin = new BrowserWindow({
+      x,
+      y,
+      width,
+      height,
+      // 不透明窗口：显示截图预览，避免透明窗口在部分 Linux 桌面变黑
+      transparent: false,
+      backgroundColor: '#000000',
+      frame: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      movable: false,
+      hasShadow: false,
+      fullscreenable: false,
+      enableLargerThanScreen: true,
+      // 预览图就绪前不显示，避免一闪而过的黑屏
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    })
     screenshotWin.setAlwaysOnTop(true, 'screen-saver')
     screenshotWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-    return
-  }
+    screenshotWin.loadFile(path.join(__dirname, 'screenshot.html'))
 
-  screenshotWin = new BrowserWindow({
-    x,
-    y,
-    width,
-    height,
-    // 不透明窗口：显示截图预览，避免透明窗口在部分 Linux 桌面变黑
-    transparent: false,
-    backgroundColor: '#000000',
-    frame: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    movable: false,
-    hasShadow: false,
-    fullscreenable: false,
-    enableLargerThanScreen: true,
-    // 预览图就绪前不显示，避免一闪而过的黑屏
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  })
-  screenshotWin.setAlwaysOnTop(true, 'screen-saver')
-  screenshotWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  screenshotWin.loadFile(path.join(__dirname, 'screenshot.html'))
+    screenshotWin.webContents.once('did-finish-load', () => {
+      // 页面加载完成后，若捕获已完成则立即发送预览
+      if (screenshotWin && !screenshotWin.isDestroyed() && screenshotCapture) {
+        sendPreviewData(screenshotCapture)
+      }
+      resolve()
+    })
 
-  screenshotWin.webContents.once('did-finish-load', () => {
-    // 页面加载完成后，若捕获已完成则立即发送预览
-    if (screenshotWin && !screenshotWin.isDestroyed() && screenshotCapture) {
-      sendPreviewData(screenshotCapture)
-    }
-  })
-
-  screenshotWin.on('closed', () => {
-    screenshotWin = null
-    screenshotCapture = null
-    if (screenshotResolver) {
-      const r = screenshotResolver
-      screenshotResolver = null
-      r({ ok: false, cancelled: true })
-    }
+    screenshotWin.on('closed', () => {
+      screenshotWin = null
+      screenshotCapture = null
+      if (screenshotResolver) {
+        const r = screenshotResolver
+        screenshotResolver = null
+        r({ ok: false, cancelled: true })
+      }
+    })
   })
 }
 
@@ -281,7 +287,9 @@ function sendPreviewData(captured) {
       y: c.bounds.y - winBounds.y,
       width: w,
       height: h,
-      image: 'data:image/jpeg;base64,' + resized.toJPEG(80).toString('base64'),
+      // JPEG 70：预览图仅作选区显示用，最终裁剪使用原生分辨率图像，
+      // 降低质量可显著加快编码与传输，减少「开始截图」的等待感
+      image: 'data:image/jpeg;base64,' + resized.toJPEG(70).toString('base64'),
     }
   })
   screenshotWin.webContents.send('screenshot-data', { displays: preview })
@@ -629,35 +637,107 @@ async function windowsScreenshot(tmpPath) {
   throw new Error('截图失败，请使用 Win+Shift+S 截图后粘贴')
 }
 
-// ── 浮动截图窗口 ──
+// ── 浮动截图窗口（Snipaste 式：无边框纯图片、整窗拖动、滚轮缩放）──
+let pinWin = null
+let pinDataUrl = null
+let pinDragOffset = null // 拖动时光标相对窗口左上角的偏移
+
 ipcMain.handle('pin-screenshot', (_event, dataUrl) => {
-  const pinWin = new BrowserWindow({
-    width: 420,
-    height: 320,
-    minWidth: 120,
-    minHeight: 80,
-    resizable: true,
+  pinDataUrl = dataUrl
+  // 窗口初始尺寸 = 图片实际尺寸（Snipaste 式，无多余边距）
+  const size = nativeImage.createFromDataURL(dataUrl).getSize()
+  const w = Math.max(24, size.width || 420)
+  const h = Math.max(24, size.height || 320)
+
+  if (pinWin && !pinWin.isDestroyed()) {
+    // 复用 pin 窗口
+    pinWin.setSize(w, h)
+    pinWin.webContents.send('pin-set-image', dataUrl)
+    pinWin.show()
+    pinWin.focus()
+    return
+  }
+
+  pinWin = new BrowserWindow({
+    width: w,
+    height: h,
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
+    resizable: false,
+    hasShadow: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   })
+  pinWin.on('closed', () => { pinWin = null; pinDragOffset = null })
 
-  const encoded = encodeURIComponent(dataUrl)
   pinWin.loadFile(path.join(__dirname, '../dist/index.html'), {
-    hash: `pin:${encoded}`,
+    hash: `pin:${encodeURIComponent(dataUrl)}`,
   })
+})
 
-  // 双击关闭
-  pinWin.webContents.on('did-finish-load', () => {
-    pinWin.webContents.executeJavaScript(`
-      document.addEventListener('dblclick', () => window.electronAPI.closeWindow())
-    `)
-  })
+// 拖动开始：记录光标相对窗口的偏移（渲染端传 screenX/screenY，Wayland 兼容）
+ipcMain.on('pin-drag-start', (e, pos) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  if (!win) return
+  const [wx, wy] = win.getPosition()
+  pinDragOffset = { dx: pos.screenX - wx, dy: pos.screenY - wy }
+})
+
+// 拖动中：跟随光标移动窗口
+ipcMain.on('pin-drag-move', (e, pos) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  if (!win || !pinDragOffset) return
+  win.setPosition(
+    Math.round(pos.screenX - pinDragOffset.dx),
+    Math.round(pos.screenY - pinDragOffset.dy)
+  )
+})
+
+// 拖动结束
+ipcMain.on('pin-drag-end', () => { pinDragOffset = null })
+
+// 滚轮缩放：按新图片尺寸调整窗口大小
+ipcMain.on('pin-resize', (e, { w, h }) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  if (!win) return
+  win.setSize(Math.max(24, Math.round(w)), Math.max(24, Math.round(h)))
+})
+
+// 右键菜单（Snipaste 式）
+ipcMain.on('pin-context-menu', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  if (!win) return
+  const dataUrl = pinDataUrl
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '复制图片',
+      click: () => {
+        try {
+          clipboard.writeImage(nativeImage.createFromDataURL(dataUrl))
+        } catch { /* 剪贴板不可用时静默忽略 */ }
+      },
+    },
+    {
+      label: '保存图片…',
+      click: () => {
+        const img = nativeImage.createFromDataURL(dataUrl)
+        dialog.showSaveDialog(win, {
+          title: '保存图钉图片',
+          defaultPath: `QRTEXT-pin-${Date.now()}.png`,
+          filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+        }).then(({ canceled, filePath }) => {
+          if (!canceled && filePath) fs.writeFileSync(filePath, img.toPNG())
+        }).catch(() => {})
+      },
+    },
+    { type: 'separator' },
+    { label: '关闭', click: () => win.close() },
+  ])
+  menu.popup({ window: win })
 })
 
 ipcMain.on('close-window', (event) => {

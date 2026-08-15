@@ -13,18 +13,67 @@ const isElectron = !!api
 declare const __APP_VERSION__: string
 const version = __APP_VERSION__
 
-// ── 浮窗模式 ──
+// ── 浮窗模式（Snipaste 式：无边框纯图片、整窗拖动、滚轮缩放）──
 const isPinWindow = window.location.hash.startsWith('#pin:')
-const pinImgSrc = isPinWindow ? decodeURIComponent(window.location.hash.substring(5)) : ''
+const pinImgSrc = ref(isPinWindow ? decodeURIComponent(window.location.hash.substring(5)) : '')
+
+// 图钉图片原始尺寸（用于滚轮缩放比例计算）
+const pinBaseSize = ref({ w: 0, h: 0 })
+const pinScale = ref(1)
+let pinDragging = false
+
+function pinClose() { isElectron && api.closeWindow() }
+function pinContextMenu() { isElectron && api.pinContextMenu() }
+
+function pinImgLoad(e: Event) {
+  const img = e.target as HTMLImageElement
+  pinBaseSize.value = { w: img.naturalWidth, h: img.naturalHeight }
+}
+
+// 整窗拖动：通过 IPC 让主进程跟随光标移动窗口。不用 CSS -webkit-app-region:
+// drag，是因为它会拦截该区域内的滚轮事件，导致滚轮缩放无法工作
+function pinDragStart(e: MouseEvent) {
+  if (e.button !== 0) return
+  pinDragging = true
+  if (isElectron) api.pinDragStart({ screenX: e.screenX, screenY: e.screenY })
+}
+function pinDragMove(e: MouseEvent) {
+  if (!pinDragging) return
+  if (isElectron) api.pinDragMove({ screenX: e.screenX, screenY: e.screenY })
+}
+function pinDragEnd() {
+  if (!pinDragging) return
+  pinDragging = false
+  if (isElectron) api.pinDragEnd()
+}
+
+// 滚轮缩放：图片与窗口尺寸同步变化（Snipaste 式，范围 0.2x ~ 4x）
+function pinWheel(e: WheelEvent) {
+  const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+  pinScale.value = Math.min(4, Math.max(0.2, pinScale.value * factor))
+  if (isElectron && pinBaseSize.value.w > 0) {
+    api.pinResize({
+      w: Math.round(pinBaseSize.value.w * pinScale.value),
+      h: Math.round(pinBaseSize.value.h * pinScale.value),
+    })
+  }
+}
 
 if (isPinWindow) {
   onMounted(() => {
-    document.addEventListener('dblclick', () => isElectron && api.closeWindow())
+    // Esc 关闭
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') isElectron && api.closeWindow()
+    })
+    // 复用 pin 窗口时更新图片并重置缩放
+    if (isElectron && api.onPinSetImage) {
+      api.onPinSetImage((dataUrl: string) => {
+        pinImgSrc.value = dataUrl
+        pinScale.value = 1
+      })
+    }
   })
 }
-
-function pinClose() { isElectron && api.closeWindow() }
-function pinDragStart() { /* Electron frameless window: CSS -webkit-app-region: drag */ }
 
 // ── 关于弹窗 ──
 const showAbout = ref(false)
@@ -315,14 +364,24 @@ const showDownload = computed(() => !!qrDataUrl.value)
 </script>
 
 <template>
-  <!-- ── 浮窗模式 ── -->
-  <div v-if="isPinWindow" class="pin-window">
-    <div class="pin-bar" @mousedown="pinDragStart">
-      <button class="pin-close" @click="pinClose">✕</button>
-    </div>
-    <div class="pin-body">
-      <img :src="pinImgSrc" />
-    </div>
+  <!-- ── 浮窗模式（Snipaste 式：无边框纯图片、整窗拖动、滚轮缩放）── -->
+  <div
+    v-if="isPinWindow"
+    class="pin-window"
+    @dblclick="pinClose"
+    @contextmenu.prevent="pinContextMenu"
+  >
+    <img
+      :src="pinImgSrc"
+      class="pin-img"
+      draggable="false"
+      @wheel.prevent="pinWheel"
+      @mousedown="pinDragStart"
+      @mousemove="pinDragMove"
+      @mouseup="pinDragEnd"
+      @mouseleave="pinDragEnd"
+      @load="pinImgLoad"
+    />
   </div>
 
   <!-- ── 正常模式 ── -->
@@ -1075,28 +1134,15 @@ const showDownload = computed(() => !!qrDataUrl.value)
   transform: scale(0.9);
 }
 
-/* ── 浮窗模式 ── */
+/* ── 浮窗模式（Snipaste 式：无边框纯图片）── */
 .pin-window {
-  height: 100vh; display: flex; flex-direction: column;
-  background: #1a1a1a; overflow: hidden;
+  width: 100vw; height: 100vh; overflow: hidden;
+  background: #1a1a1a; cursor: grab;
 }
-.pin-bar {
-  height: 28px; background: rgba(0,0,0,0.5); display: flex;
-  align-items: center; justify-content: flex-end; padding: 0 8px;
-  flex-shrink: 0; -webkit-app-region: drag;
-}
-.pin-close {
-  -webkit-app-region: no-drag; border: none; background: none;
-  color: #fff; cursor: pointer; font-size: 16px;
-  width: 28px; height: 28px; border-radius: 6px;
-}
-.pin-close:hover { background: rgba(255,255,255,0.15); }
-.pin-body {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  overflow: auto;
-}
-.pin-body img {
-  max-width: 100%; max-height: 100%; object-fit: contain;
+.pin-window:active { cursor: grabbing; }
+.pin-img {
+  width: 100%; height: 100%; display: block;
+  object-fit: fill; /* 窗口尺寸 = 图片尺寸，1:1 显示 */
   user-select: none; -webkit-user-drag: none;
 }
 </style>

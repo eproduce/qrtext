@@ -106,7 +106,7 @@
         api.screenshotReady && api.screenshotReady()
         return
       }
-      var pending = displays.length
+      var notified = false
       displays.forEach(function (d) {
         var img = new Image()
         img.className = 'screen-img'
@@ -114,18 +114,19 @@
         img.style.top = d.y + 'px'
         img.style.width = d.width + 'px'
         img.style.height = d.height + 'px'
+        function ready() {
+          if (!notified) {
+            notified = true
+            // 第一张预览图就绪即显示窗口（Snipaste 式即时反馈），
+            // 其余屏幕继续异步加载，避免等全部就绪时的黑屏卡顿
+            api.screenshotReady && api.screenshotReady()
+          }
+        }
         img.onload = function () {
           container.appendChild(img)
-          if (--pending === 0) {
-            // 所有预览图加载完成后再通知主进程显示窗口
-            api.screenshotReady && api.screenshotReady()
-          }
+          ready()
         }
-        img.onerror = function () {
-          if (--pending === 0) {
-            api.screenshotReady && api.screenshotReady()
-          }
-        }
+        img.onerror = ready
         img.src = d.image
       })
     })

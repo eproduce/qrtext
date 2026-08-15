@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── 浮动截图 ──
   pinScreenshot: (dataUrl) => ipcRenderer.invoke('pin-screenshot', dataUrl),
+  // Snipaste 式：整窗拖动 + 滚轮缩放 + 右键菜单
+  pinDragStart: (pos) => ipcRenderer.send('pin-drag-start', pos),
+  pinDragMove: (pos) => ipcRenderer.send('pin-drag-move', pos),
+  pinDragEnd: () => ipcRenderer.send('pin-drag-end'),
+  pinResize: (size) => ipcRenderer.send('pin-resize', size),
+  pinContextMenu: () => ipcRenderer.send('pin-context-menu'),
+  onPinSetImage: (callback) => ipcRenderer.on('pin-set-image', (_e, dataUrl) => callback(dataUrl)),
 
   // ── 关闭当前窗口 ──
   closeWindow: () => ipcRenderer.send('close-window'),

@@ -203,12 +203,10 @@ function customLinuxScreenshot() {
 function ensureSelectionWindow(x, y, width, height) {
   return new Promise((resolve) => {
     if (screenshotWin && !screenshotWin.isDestroyed()) {
-      // 复用已创建的窗口：更新位置尺寸
+      // 复用已创建的窗口：更新位置尺寸。
+      // 置顶由显示后的 raiseScreenshotWindow 处理——窗口隐藏/未映射时
+      // 设置 alwaysOnTop 会被 X11 忽略（crbug.com/1260832）。
       screenshotWin.setBounds({ x, y, width, height })
-      // 重新提升层级：前一次截图之后可能有应用进入了全屏（多屏场景），
-      // 需确保选区窗口仍能盖过全屏应用
-      screenshotWin.setAlwaysOnTop(true, 'screen-saver')
-      screenshotWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
       resolve()
       return
     }
@@ -506,13 +504,36 @@ ipcMain.on('screenshot-cancel', () => {
 })
 
 ipcMain.on('screenshot-ready', () => {
-  if (screenshotWin && !screenshotWin.isDestroyed()) {
-    // 显示前再次提升窗口层级，确保盖过其它屏幕上的全屏应用
-    screenshotWin.moveTop()
-    screenshotWin.show()
-    screenshotWin.focus()
-  }
+  const win = screenshotWin
+  if (!win || win.isDestroyed()) return
+  // 先显示并聚焦（映射窗口），再提升层级。
+  // 注意：moveTop/setAlwaysOnTop 在窗口未映射（隐藏）时调用会被 X11 忽略
+  // （Chromium crbug.com/1260832），必须在 show() 之后执行并重试，
+  // 确保 WM 将选区窗口置于其它屏幕的全屏应用之上。
+  win.show()
+  win.focus()
+  raiseScreenshotWindow()
 })
+
+// 提升选区窗口到最顶，盖过多屏场景下其它屏幕的全屏应用。
+// X11：ABOVE 属性需在窗口映射（show）后由 WM 应用，延迟重试数次确保生效；
+// Wayland：moveTop 不受支持、置顶由 compositor 决定，调用无害。
+function raiseScreenshotWindow() {
+  const win = screenshotWin
+  if (!win || win.isDestroyed()) return
+  let tries = 0
+  const attempt = () => {
+    if (!win || win.isDestroyed()) return
+    try {
+      win.setAlwaysOnTop(true, 'screen-saver')
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      win.moveTop()
+      win.focus()
+    } catch { /* Wayland 等平台不支持部分调用，忽略 */ }
+    if (++tries < 8) setTimeout(attempt, 40)
+  }
+  attempt()
+}
 
 // 从预捕获图像中按全局 DIP 坐标裁剪（多屏 + 不同缩放比适配）
 async function cropFromCapture(captured, selection) {

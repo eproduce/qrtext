@@ -162,6 +162,16 @@ let screenshotCapture = null // 预捕获的显示器图像 [{ bounds, scaleFact
 
 function customLinuxScreenshot() {
   return new Promise((resolve) => {
+    // 原生 Wayland 会话：普通窗口在协议上无法盖过全屏应用（全屏 surface 恒在
+    // 最顶），且 getBounds 返回 {0,0}、moveTop 不受支持，自研选区在多屏 +
+    // 全屏下不可靠。直接返回「未完成」，让主流程回退系统截图工具
+    // （grim+slurp / spectacle / gnome-screenshot 等，走合成器接口，
+    // 可盖过全屏应用进行选区）。
+    if (process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY) {
+      resolve({ ok: false, cancelled: false })
+      return
+    }
+
     // 已有进行中的截图（用 resolver 判断，窗口会常驻复用）
     if (screenshotResolver) {
       resolve({ ok: false, cancelled: false })

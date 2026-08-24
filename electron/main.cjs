@@ -159,6 +159,7 @@ function writeImageToClipboard(dataUrl) {
 let screenshotWin = null
 let screenshotResolver = null
 let screenshotCapture = null // 预捕获的显示器图像 [{ bounds, scaleFactor, nativeImage }]
+let unfullscreenQueue = [] // 被临时取消全屏的窗口 ID（X11，截图结束后恢复）
 
 function customLinuxScreenshot() {
   return new Promise((resolve) => {
@@ -194,7 +195,13 @@ function customLinuxScreenshot() {
       ensureSelectionWindow(box.x, box.y, box.width, box.height),
       captureAllDisplays(),
     ])
-      .then(([, captured]) => {
+      .then(async ([, captured]) => {
+        // 捕获已含全屏内容。随后临时取消其它屏幕的全屏窗口，让选区窗口能
+        // 显示在最顶；截图结束后自动恢复全屏（解决部分桌面下全屏压住选区）
+        if (unfullscreenQueue.length === 0) {
+          unfullscreenQueue = await findFullscreenWindowsX11()
+        }
+        await unfullscreenX11(unfullscreenQueue)
         screenshotCapture = captured
         sendPreviewData(captured)
       })
@@ -204,6 +211,8 @@ function customLinuxScreenshot() {
         screenshotResolver = null
         hideSelectionWindow()
         restoreMainWindow()
+        refullscreenX11(unfullscreenQueue)
+        unfullscreenQueue = []
         resolve({ ok: false, cancelled: false })
       })
   })
@@ -260,6 +269,8 @@ function ensureSelectionWindow(x, y, width, height) {
     screenshotWin.on('closed', () => {
       screenshotWin = null
       screenshotCapture = null
+      refullscreenX11(unfullscreenQueue)
+      unfullscreenQueue = []
       if (screenshotResolver) {
         const r = screenshotResolver
         screenshotResolver = null
@@ -313,6 +324,56 @@ function getVirtualBounds(displays) {
     maxY = Math.max(maxY, d.bounds.y + d.bounds.height)
   }
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+// ── X11 全屏窗口临时处理（wmctrl + xprop）──
+// 自研选区窗口即使 ABOVE 置顶，部分窗口管理器/合成器仍可能让全屏应用压住它。
+// 这里在截图内容捕获完成后，临时取消其它屏幕的全屏窗口，让选区窗口能正常
+// 显示在最顶；截图结束后自动恢复全屏状态。
+async function findFullscreenWindowsX11() {
+  try {
+    const hasWmctrl = await commandExists('wmctrl')
+    const hasXprop = await commandExists('xprop')
+    if (!hasWmctrl || !hasXprop) return []
+    const list = await exec('wmctrl', ['-l'])
+    const ids = list
+      .split('\n')
+      .map((l) => l.trim().split(/\s+/)[0])
+      .filter((id) => /^0x[0-9a-f]+$/i.test(id))
+    // 本应用窗口（主窗口/选区窗口）不会进入全屏，仍排除以防误判
+    const selfIds = []
+    for (const w of [mainWindow, screenshotWin]) {
+      if (w && !w.isDestroyed()) {
+        try {
+          const buf = w.getNativeWindowHandle()
+          if (buf && buf.length >= 4) selfIds.push(`0x${buf.readUInt32LE(0).toString(16)}`)
+        } catch { /* 忽略 */ }
+      }
+    }
+    const fullscreen = []
+    for (const id of ids) {
+      if (selfIds.includes(id.toLowerCase())) continue
+      try {
+        const state = await exec('xprop', ['-id', id, '_NET_WM_STATE'])
+        if (state.includes('_NET_WM_STATE_FULLSCREEN')) fullscreen.push(id)
+      } catch { /* 窗口可能已销毁 */ }
+    }
+    return fullscreen
+  } catch { return [] }
+}
+
+// 临时取消指定窗口的全屏（让选区窗口可盖过）
+async function unfullscreenX11(ids) {
+  for (const id of ids) {
+    try { await exec('wmctrl', ['-i', '-r', id, '-b', 'remove,fullscreen']) } catch { /* 忽略 */ }
+  }
+}
+
+// 恢复指定窗口的全屏状态
+async function refullscreenX11(ids) {
+  for (const id of ids) {
+    try { await exec('wmctrl', ['-i', '-r', id, '-b', 'add,fullscreen']) } catch { /* 忽略 */ }
+  }
 }
 
 // 快速检测命令是否存在（shell 内建 command -v）
@@ -494,6 +555,9 @@ ipcMain.on('screenshot-select', async (_event, relBounds) => {
   // 隐藏窗口（复用，下次截图无需重新创建）
   hideSelectionWindow()
   restoreMainWindow()
+  // 恢复被临时取消全屏的应用
+  refullscreenX11(unfullscreenQueue)
+  unfullscreenQueue = []
 
   try {
     // 直接用预捕获的原生分辨率图像裁剪（内存操作，无捕获延迟）
@@ -510,6 +574,8 @@ ipcMain.on('screenshot-cancel', () => {
   screenshotCapture = null
   hideSelectionWindow()
   restoreMainWindow()
+  refullscreenX11(unfullscreenQueue)
+  unfullscreenQueue = []
   resolver && resolver({ ok: false, cancelled: true })
 })
 

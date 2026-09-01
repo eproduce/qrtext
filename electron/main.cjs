@@ -345,35 +345,65 @@ function execWithTimeout(cmd, args, timeout) {
 
 // 用 X11/Wayland 原生工具静默捕获整个虚拟桌面（远快于 desktopCapturer）
 async function tryNativeFullCapture() {
-  const tmpPath = path.join(os.tmpdir(), `qrtext_full_${Date.now()}.jpg`)
   const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY
-  const candidates = isWayland
-    ? [{ cmd: 'grim', args: [tmpPath] }]
+
+  // 第一梯队：静默且快的工具，无快门声/闪烁副作用，优先使用
+  const silent = isWayland
+    ? [{ cmd: 'grim', args: (p) => [p] }]
     : [
         // import 输出 JPEG（-strip 去掉元数据，quality 90），比 PNG 编码快得多
-        { cmd: 'import', args: ['-window', 'root', '-strip', '-quality', '90', tmpPath] },
-        { cmd: 'maim', args: ['-u', tmpPath] },
-        { cmd: 'scrot', args: ['-o', tmpPath] },
-        { cmd: 'gnome-screenshot', args: ['-f', tmpPath] },
-        { cmd: 'kylin-screenshot', args: [tmpPath] },
+        { cmd: 'import', args: (p) => ['-window', 'root', '-strip', '-quality', '90', p] },
+        { cmd: 'maim', args: (p) => ['-u', p] },
+        { cmd: 'scrot', args: (p) => ['-o', p] },
       ]
+  const img = await raceNativeTools(silent)
+  if (img) return img
 
-  // 并行检测工具是否存在，只调用可用的，避免逐个失败尝试的延迟
+  if (isWayland) return null
+
+  // 第二梯队：桌面环境自带截图工具（可能有快门声/闪烁），仅在无静默工具可用时回退
+  const desktop = [
+    { cmd: 'gnome-screenshot', args: (p) => ['-f', p] },
+    { cmd: 'mate-screenshot', args: (p) => ['-f', p] },
+    { cmd: 'xfce4-screenshooter', args: (p) => ['-f', '-s', p] },
+    { cmd: 'ukui-screenshot', args: (p) => ['-f', p] },
+    { cmd: 'deepin-screenshot', args: (p) => ['-f', p] },
+  ]
+  return raceNativeTools(desktop)
+}
+
+// 并行执行一组原生捕获工具（各自独立临时文件），首个成功者胜出。
+// 串行逐个尝试时，每个挂起的工具都会白白消耗一个超时周期（1.5s×N），
+// 这是「点击截图后数秒才出现选区」的主要来源；并行后最坏仅 1 个超时周期。
+async function raceNativeTools(tools) {
   const checks = await Promise.all(
-    candidates.map(async (tool) => ((await commandExists(tool.cmd)) ? tool : null))
+    tools.map(async (tool) => ((await commandExists(tool.cmd)) ? tool : null))
   )
   const available = checks.filter(Boolean)
+  if (available.length === 0) return null
 
-  for (const tool of available) {
-    try {
-      // 1.5 秒超时：工具若是交互式/参数错误挂起，直接放弃换下一个
-      await execWithTimeout(tool.cmd, tool.args, 1500)
-      if (fs.existsSync(tmpPath)) {
-        const img = nativeImage.createFromPath(tmpPath)
-        fs.unlinkSync(tmpPath)
-        if (!img.isEmpty()) return img
-      }
-    } catch { /* 参数不支持等，尝试下一个 */ }
+  const results = await Promise.all(
+    available.map((tool) => {
+      const tmpPath = path.join(
+        os.tmpdir(),
+        `qrtext_full_${Date.now()}_${Math.floor(Math.random() * 1e9)}.jpg`
+      )
+      return execWithTimeout(tool.cmd, tool.args(tmpPath), 1500)
+        .then(() => {
+          let img = null
+          if (fs.existsSync(tmpPath)) {
+            const candidate = nativeImage.createFromPath(tmpPath)
+            if (!candidate.isEmpty()) img = candidate
+            try { fs.unlinkSync(tmpPath) } catch { /* 忽略清理失败 */ }
+          }
+          return img
+        })
+        .catch(() => null)
+    })
+  )
+
+  for (const img of results) {
+    if (img) return img
   }
   return null
 }

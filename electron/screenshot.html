@@ -18,88 +18,114 @@
     -webkit-user-drag: none; pointer-events: none;
   }
 
-  /* Snipaste 式遮罩：4 个遮罩 div + 选区边框，全部 GPU 合成层 */
-  .mask {
-    position: fixed;
-    background: rgba(0, 0, 0, 0.45);
-    will-change: transform;
-    transform: translateZ(0);
-    z-index: 2;
-  }
-  .mask-top    { left: 0; top: 0; right: 0; }
-  .mask-bottom { left: 0; bottom: 0; right: 0; }
-  .mask-left   { left: 0; top: 0; }
-  .mask-right  { right: 0; top: 0; }
-
-  .selection {
-    position: fixed;
-    display: none;
-    border: 1.5px solid #007aff;
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
-    will-change: transform;
-    transform: translateZ(0);
-    z-index: 3;
-  }
-
-  .size-label {
-    position: fixed;
-    display: none;
-    padding: 2px 6px;
-    background: #007aff;
-    color: #fff;
-    font: 12px/1.4 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-    border-radius: 4px;
-    white-space: nowrap;
-    pointer-events: none;
-    will-change: transform;
-    transform: translateZ(0);
-    z-index: 3;
+  /* 单一 canvas 覆盖层：遮罩 + 选区边框 + 尺寸标签在同一次绘制中原子完成，
+     每帧只呈现完整状态，杜绝多个 div 各自更新不同步导致的
+     撕裂 / “L、X”形回字形残影 */
+  #overlay {
+    position: fixed; inset: 0; z-index: 2;
+    display: block;
+    cursor: crosshair;
   }
 </style>
 </head>
 <body>
   <div id="screenContainer"></div>
-  <div class="mask mask-top" id="maskTop"></div>
-  <div class="mask mask-bottom" id="maskBottom"></div>
-  <div class="mask mask-left" id="maskLeft"></div>
-  <div class="mask mask-right" id="maskRight"></div>
-  <div class="selection" id="selection"></div>
-  <div class="size-label" id="sizeLabel"></div>
+  <canvas id="overlay"></canvas>
 
 <script>
   (function () {
     var api = window.electronAPI || {}
     var container = document.getElementById('screenContainer')
-    var maskTop = document.getElementById('maskTop')
-    var maskBottom = document.getElementById('maskBottom')
-    var maskLeft = document.getElementById('maskLeft')
-    var maskRight = document.getElementById('maskRight')
-    var selection = document.getElementById('selection')
-    var sizeLabel = document.getElementById('sizeLabel')
+    var canvas = document.getElementById('overlay')
+    var ctx = canvas.getContext('2d')
 
     var startX = 0, startY = 0, curX = 0, curY = 0
     var drawing = false
 
-    // 重置选区遮罩、边框、标签到初始状态（窗口复用场景）
+    // 按 devicePixelRatio 设置画布物理尺寸，保证边框/文字清晰
+    function resizeCanvas() {
+      var dpr = window.devicePixelRatio || 1
+      canvas.width = Math.round(window.innerWidth * dpr)
+      canvas.height = Math.round(window.innerHeight * dpr)
+      canvas.style.width = window.innerWidth + 'px'
+      canvas.style.height = window.innerHeight + 'px'
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      draw()
+    }
+
+    function roundedRect(x, y, w, h, r) {
+      var rr = Math.max(0, Math.min(r, w / 2, h / 2))
+      if (ctx.roundRect) {
+        ctx.beginPath()
+        ctx.roundRect(x, y, w, h, rr)
+        return
+      }
+      ctx.beginPath()
+      ctx.moveTo(x + rr, y)
+      ctx.arcTo(x + w, y, x + w, y + h, rr)
+      ctx.arcTo(x + w, y + h, x, y + h, rr)
+      ctx.arcTo(x, y + h, x, y, rr)
+      ctx.arcTo(x, y, x + w, y, rr)
+      ctx.closePath()
+    }
+
+    // 单次原子绘制：遮罩 → 挖空选区 → 边框 → 尺寸标签。
+    // 所有元素在同一帧内同步更新，绝不出现中间态（L/X/回字形残影）。
+    function draw() {
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+      if (!drawing) return
+      var x = Math.min(startX, curX)
+      var y = Math.min(startY, curY)
+      var w = Math.abs(curX - startX)
+      var h = Math.abs(curY - startY)
+      if (w < 1 || h < 1) return
+
+      // 半透明遮罩铺满全屏
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'
+      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight)
+
+      // 挖空选区，露出下方屏幕预览
+      ctx.clearRect(x, y, w, h)
+
+      // 蓝色外框 + 内层白边
+      ctx.strokeStyle = '#007aff'
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(x, y, w, h)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)'
+      ctx.lineWidth = 1
+      ctx.strokeRect(x + 1, y + 1, w - 2, h - 2)
+
+      // 尺寸标签
+      var label = Math.round(w) + ' × ' + Math.round(h)
+      ctx.font = '12px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif'
+      var tw = ctx.measureText(label).width
+      var bw = tw + 12
+      var bh = 20
+      var lx = x
+      var ly = y > bh + 6 ? y - bh - 6 : y + h + 6
+      if (lx + bw > window.innerWidth) lx = window.innerWidth - bw
+      if (ly + bh > window.innerHeight) ly = window.innerHeight - bh
+      if (lx < 0) lx = 0
+      if (ly < 0) ly = 0
+      ctx.fillStyle = '#007aff'
+      roundedRect(lx, ly, bw, bh, 4)
+      ctx.fill()
+      ctx.fillStyle = '#fff'
+      ctx.fillText(label, lx + 6, ly + 14)
+    }
+
+    // 重置选区（窗口复用场景）
     function resetOverlay() {
       drawing = false
       startX = 0; startY = 0; curX = 0; curY = 0
-      maskTop.style.height = '0px'
-      maskBottom.style.top = '100%'
-      maskLeft.style.top = '0px'
-      maskLeft.style.height = '0px'
-      maskLeft.style.width = '0px'
-      maskRight.style.top = '0px'
-      maskRight.style.left = '100%'
-      maskRight.style.height = '0px'
-      selection.style.display = 'none'
-      sizeLabel.style.display = 'none'
+      draw()
     }
 
     // 接收主进程发来的屏幕预览数据，渲染各显示器截图
     api.onScreenshotData && api.onScreenshotData(function (data) {
-      // 清空旧预览与上次的选区状态（窗口复用场景）
+      // 清空旧预览与上次的选区状态（窗口复用场景），并校准画布尺寸
       container.innerHTML = ''
+      resizeCanvas()
       resetOverlay()
       var displays = data.displays || []
       if (displays.length === 0) {
@@ -131,49 +157,25 @@
       })
     })
 
-    function update() {
-      var x = Math.min(startX, curX)
-      var y = Math.min(startY, curY)
-      var w = Math.abs(curX - startX)
-      var h = Math.abs(curY - startY)
-
-      maskTop.style.height = y + 'px'
-      maskBottom.style.top = (y + h) + 'px'
-      maskLeft.style.top = y + 'px'
-      maskLeft.style.height = h + 'px'
-      maskLeft.style.width = x + 'px'
-      maskRight.style.top = y + 'px'
-      maskRight.style.left = (x + w) + 'px'
-      maskRight.style.height = h + 'px'
-
-      selection.style.display = 'block'
-      selection.style.transform = 'translate(' + x + 'px,' + y + 'px)'
-      selection.style.width = w + 'px'
-      selection.style.height = h + 'px'
-
-      sizeLabel.style.display = 'block'
-      sizeLabel.textContent = Math.round(w) + ' × ' + Math.round(h)
-      sizeLabel.style.transform = 'translate(' + x + 'px,' + (y > 22 ? y - 24 : y + h + 6) + 'px)'
-    }
-
     function onDown(e) {
       if (e.button !== 0) return
       drawing = true
       startX = e.clientX; startY = e.clientY
       curX = e.clientX; curY = e.clientY
-      update()
+      draw()
     }
 
     function onMove(e) {
       if (!drawing) return
       curX = e.clientX; curY = e.clientY
-      update()
+      draw()
     }
 
     function onUp(e) {
       if (!drawing || e.button !== 0) return
       drawing = false
       curX = e.clientX; curY = e.clientY
+      draw()
       var x = Math.round(Math.min(startX, curX))
       var y = Math.round(Math.min(startY, curY))
       var w = Math.round(Math.abs(curX - startX))
@@ -200,6 +202,9 @@
       e.preventDefault()
       api.screenshotCancel && api.screenshotCancel()
     })
+
+    resizeCanvas()
+    window.addEventListener('resize', resizeCanvas)
   })()
 </script>
 </body>

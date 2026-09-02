@@ -17,6 +17,10 @@
     position: absolute; display: block;
     -webkit-user-drag: none; pointer-events: none;
   }
+  /* 兜底：整个选区页强制十字光标，避免被个别主题/元素覆盖成默认箭头 */
+  html, body, #screenContainer, #screenContainer *, #overlay {
+    cursor: crosshair;
+  }
 
   /* 单一 canvas 覆盖层：遮罩 + 选区边框 + 尺寸标签在同一次绘制中原子完成，
      每帧只呈现完整状态，杜绝多个 div 各自更新不同步导致的

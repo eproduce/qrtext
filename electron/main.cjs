@@ -465,11 +465,15 @@ async function raceNativeTools(tools) {
 // 原生工具捕获整个虚拟桌面 → 按显示器边界裁剪为 captured 列表；失败返回 null。
 // 整体限时：某工具存在但挂起时不耗尽多级串行超时
 async function captureNativeByDisplay(displays, box) {
+  const t0 = Date.now()
   const fullImg = await Promise.race([
     tryNativeFullCapture(),
     new Promise((r) => setTimeout(() => r(null), 1400)),
   ])
-  if (!fullImg) return null
+  if (!fullImg) {
+    dbg('native 捕获未产出图像（无工具/工具超时），', `${Date.now() - t0}ms`)
+    return null
+  }
   const size = fullImg.getSize()
   if (!(size.width > 0 && size.height > 0)) return null
   const scaleX = size.width / box.width
@@ -477,7 +481,11 @@ async function captureNativeByDisplay(displays, box) {
   // 捕获尺寸与虚拟桌面不成比例（如 grim 只抓聚焦屏、全屏应用切换分辨率、
   // 某屏幕独占捕获等）→ 视为不完整
   const ratioDiff = Math.abs(scaleX - scaleY) / Math.max(scaleX, scaleY)
-  if (ratioDiff > 0.1) return null
+  if (ratioDiff > 0.1) {
+    dbg('native 图像比例不符，丢弃 size=', size, 'box=', box)
+    return null
+  }
+  dbg('native 捕获成功（import 等），', `${Date.now() - t0}ms`)
   return displays.map((d) => ({
     bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
     scaleFactor: d.scaleFactor || 1,
@@ -494,10 +502,10 @@ async function captureNativeByDisplay(displays, box) {
 // 注意：Linux 下 PipeWire（Wayland）/ Xinerama（X11）常只返回单个
 // 「整个虚拟桌面」source，而非每个显示器各一个 —— 多屏时必须按边界裁剪，
 // 否则整张桌面图会被赋给每个显示器导致截图内容错位/重复。
-// 最长边封顶 1920：无原生工具时取帧+PNG 编码是延迟主因，降采样可显著提速
+// 最长边封顶 1600：无原生工具时取帧+PNG 编码是延迟主因，降采样可显著提速
 async function captureViaDesktopCapturer(displays, box) {
   const maxDim = Math.max(box.width, box.height)
-  const cap = 1920
+  const cap = 1600
   const ratio = maxDim > cap ? cap / maxDim : 1
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
@@ -644,6 +652,17 @@ ipcMain.on('screenshot-ready', () => {
   // 确保 WM 将选区窗口置于其它屏幕的全屏应用之上。
   win.show()
   win.focus()
+  // 部分 WM/合成器（如 UKUI）在窗口刚映射后不会立刻按新窗口重算光标，
+  // 需派发一次合成 mouseMove，触发 hover 光标刷新为 crosshair
+  try {
+    const pt = screen.getCursorScreenPoint()
+    const b = win.getBounds()
+    win.webContents.sendInputEvent({
+      type: 'mouseMove',
+      x: Math.max(0, Math.round(pt.x - b.x)),
+      y: Math.max(0, Math.round(pt.y - b.y)),
+    })
+  } catch { /* 个别平台不支持，忽略 */ }
   raiseScreenshotWindow()
 })
 

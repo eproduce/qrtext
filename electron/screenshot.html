@@ -17,9 +17,17 @@
     position: absolute; display: block;
     -webkit-user-drag: none; pointer-events: none;
   }
-  /* 兜底：整个选区页强制十字光标，避免被个别主题/元素覆盖成默认箭头 */
+  /* 系统光标交给自绘十字：隐藏 OS 箭头，统一用画布绘制的十字光标 + 提示条 */
   html, body, #screenContainer, #screenContainer *, #overlay {
-    cursor: crosshair;
+    cursor: none;
+  }
+  #hint {
+    position: fixed; left: 50%; top: 22px; transform: translateX(-50%);
+    z-index: 4; pointer-events: none;
+    padding: 7px 16px; border-radius: 999px;
+    background: rgba(0,0,0,0.55); color: #fff;
+    font: 13px/1.4 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    white-space: nowrap;
   }
 
   /* 单一 canvas 覆盖层：遮罩 + 选区边框 + 尺寸标签在同一次绘制中原子完成，
@@ -35,6 +43,7 @@
 <body>
   <div id="screenContainer"></div>
   <canvas id="overlay"></canvas>
+  <div id="hint">按住左键拖动选择截图区域 · Esc / 右键取消</div>
 
 <script>
   (function () {
@@ -48,6 +57,12 @@
     var vh = window.innerHeight
     var startX = 0, startY = 0, curX = 0, curY = 0
     var drawing = false
+    var hint = document.getElementById('hint')
+
+    // 自绘十字光标：UKUI/部分 WM 不显示 CSS 光标，故隐藏系统箭头、在画布
+    // 上自行绘制随鼠标移动的十字，保证任何环境下都有“截图状态”标识
+    var hx = -1, hy = -1          // 当前指针（画布 CSS 坐标）
+    var lastCross = null         // 上次十字占用矩形（用于空闲时清除旧十字）
 
     // 按 devicePixelRatio 设置画布物理尺寸，保证边框/文字清晰
     function resizeCanvas() {
@@ -66,7 +81,46 @@
     function resetOverlay() {
       drawing = false
       startX = 0; startY = 0; curX = 0; curY = 0
+      lastCross = null
       ctx.clearRect(0, 0, vw, vh)
+      if (hint) hint.style.display = ''
+    }
+
+    // 绘制十字光标（深色外晕 + 白色内核，亮暗背景都可见）；返回占用矩形
+    function drawCrosshair(x, y) {
+      var L = 9
+      ctx.lineCap = 'butt'
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(x - L, y); ctx.lineTo(x + L, y)
+      ctx.moveTo(x, y - L); ctx.lineTo(x, y + L)
+      ctx.stroke()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(x - L, y); ctx.lineTo(x + L, y)
+      ctx.moveTo(x, y - L); ctx.lineTo(x, y + L)
+      ctx.stroke()
+      return { x: x - L - 2, y: y - L - 2, w: (L + 2) * 2, h: (L + 2) * 2 }
+    }
+
+    // 空闲（未拖动）时按指针位置刷新十字：清旧十字→画新十字
+    function paintIdleCross() {
+      if (hx < 0 || hy < 0) return
+      if (lastCross) ctx.clearRect(lastCross.x, lastCross.y, lastCross.w, lastCross.h)
+      lastCross = drawCrosshair(hx, hy)
+    }
+
+    // rAF 节流：空闲时跟随鼠标刷新十字
+    var crossPending = false
+    function scheduleCross() {
+      if (crossPending) return
+      crossPending = true
+      requestAnimationFrame(function () {
+        crossPending = false
+        if (!drawing) paintIdleCross()
+      })
     }
 
     function roundedRect(x, y, w, h, r) {
@@ -132,6 +186,9 @@
       ctx.fill()
       ctx.fillStyle = '#fff'
       ctx.fillText(label, lx + 6, ly + 14)
+
+      // 拖动中也保持十字在指针位置（整帧重绘末尾画上即可）
+      if (hx >= 0 && hy >= 0) drawCrosshair(hx, hy)
     }
 
     // rAF 合并鼠标事件到每帧一次：事件到达频率常高于刷新率，逐事件同步
@@ -151,6 +208,8 @@
         if (lastPainted && lastPainted.x === x && lastPainted.y === y &&
             lastPainted.w === w && lastPainted.h === h) return
         draw()
+        // 刚按下（框尺寸仍为 0）draw() 会提前返回，这里补画十字
+        if (hx >= 0 && hy >= 0) drawCrosshair(hx, hy)
         lastPainted = { x: x, y: y, w: w, h: h }
       })
     }
@@ -195,15 +254,21 @@
       if (e.button !== 0 || drawing) return
       drawing = true
       lastPainted = null
+      if (hint) hint.style.display = 'none'
       startX = e.clientX; startY = e.clientY
       curX = e.clientX; curY = e.clientY
+      hx = e.clientX; hy = e.clientY
       schedulePaint()
     }
 
     function onMove(e) {
-      if (!drawing) return
-      curX = e.clientX; curY = e.clientY
-      schedulePaint()
+      hx = e.clientX; hy = e.clientY
+      if (drawing) {
+        curX = e.clientX; curY = e.clientY
+        schedulePaint()
+      } else {
+        scheduleCross()
+      }
     }
 
     function onUp(e) {

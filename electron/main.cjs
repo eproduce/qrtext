@@ -706,6 +706,7 @@ ipcMain.on('screenshot-ready', () => {
   // 确保 WM 将选区窗口置于其它屏幕的全屏应用之上。
   win.show()
   win.focus()
+  try { app.focus({ steal: true }) } catch { /* 个别平台忽略 */ }
   try { win.webContents.focus() } catch { /* 忽略 */ }
   // UKUI 等 WM 在窗口刚映射后不会立刻按新窗口重算光标，导致十字不显示：
   // 派发合成 mouseMove，并在 show 后稍作多次重试，确保 OS 光标切到 crosshair

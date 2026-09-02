@@ -218,18 +218,21 @@ function customLinuxScreenshot() {
   })
 }
 
-// 确保选区窗口就绪：首次创建，后续复用（避免每次新建窗口的开销）
+// 确保选区窗口就绪：已有窗口则复用（更新位置尺寸），否则新建。
+// 置顶由显示后的 raiseScreenshotWindow 处理——窗口隐藏/未映射时
+// 设置 alwaysOnTop 会被 X11 忽略（crbug.com/1260832）。
 function ensureSelectionWindow(x, y, width, height) {
-  return new Promise((resolve) => {
-    if (screenshotWin && !screenshotWin.isDestroyed()) {
-      // 复用已创建的窗口：更新位置尺寸。
-      // 置顶由显示后的 raiseScreenshotWindow 处理——窗口隐藏/未映射时
-      // 设置 alwaysOnTop 会被 X11 忽略（crbug.com/1260832）。
-      screenshotWin.setBounds({ x, y, width, height })
-      resolve()
-      return
-    }
+  if (screenshotWin && !screenshotWin.isDestroyed()) {
+    screenshotWin.setBounds({ x, y, width, height })
+    return Promise.resolve()
+  }
+  return createScreenshotWindow(x, y, width, height)
+}
 
+// 创建（隐藏）选区窗口并加载页面。供首次截图与启动预热共用；
+// 页面 did-finish-load 后再 resolve，避免预览发送过早被跳过
+function createScreenshotWindow(x, y, width, height) {
+  return new Promise((resolve) => {
     screenshotWin = new BrowserWindow({
       x,
       y,
@@ -276,6 +279,26 @@ function ensureSelectionWindow(x, y, width, height) {
       }
     })
   })
+}
+
+// 启动预热：提前在后台创建好隐藏的选区窗口并加载页面，把
+// 「首次点击截图要新建窗口 + 加载页面」的耗时挪到后台，
+// 首次截图即可直接进入捕获流程，显著缩短点击到选区的延迟
+let preloadingSelectionWin = false
+function preloadScreenshotWindow() {
+  if (process.platform !== 'linux') return
+  if (preloadingSelectionWin) return
+  if (screenshotWin && !screenshotWin.isDestroyed()) return
+  const p = screen.getPrimaryDisplay()
+  preloadingSelectionWin = true
+  createScreenshotWindow(
+    p.bounds.x,
+    p.bounds.y,
+    Math.max(1, Math.round(p.bounds.width)),
+    Math.max(1, Math.round(p.bounds.height))
+  )
+    .catch(() => {})
+    .finally(() => { preloadingSelectionWin = false })
 }
 
 function hideSelectionWindow() {
@@ -455,8 +478,10 @@ async function captureAllDisplays() {
   // 注意：Linux 下 PipeWire（Wayland）/ Xinerama（X11）常只返回单个
   // 「整个虚拟桌面」source，而非每个显示器各一个 —— 多屏时必须按边界裁剪，
   // 否则整张桌面图会被赋给每个显示器导致截图内容错位/重复。
+  // 最长边封顶 1920：无原生工具回退时每次捕获的取帧+PNG 编码是
+  // 「点击→选区出现」延迟的主要瓶颈，适当降采样可显著缩短等待
   const maxDim = Math.max(box.width, box.height)
-  const cap = 2560
+  const cap = 1920
   const ratio = maxDim > cap ? cap / maxDim : 1
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
@@ -873,6 +898,8 @@ app.whenReady().then(() => {
   setDockIcon()
   createMainWindow()
   warmUpDesktopCapturer()
+  // 稍后后台创建隐藏选区窗口，预热「新建窗口+加载页面」的开销
+  setTimeout(preloadScreenshotWindow, 1200)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

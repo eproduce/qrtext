@@ -45,12 +45,6 @@
     var startX = 0, startY = 0, curX = 0, curY = 0
     var drawing = false
 
-    // 画布状态：maskReady=true 表示整屏已铺好一层均匀遮罩；
-    // carved 记录当前被「凿开」的区域（选区洞 + 尺寸标签底），
-    // 选框移动时先把这些区域还原成遮罩，再凿新洞 —— 只重绘变化的部分
-    var maskReady = false
-    var carved = []
-
     // 按 devicePixelRatio 设置画布物理尺寸，保证边框/文字清晰
     function resizeCanvas() {
       vw = window.innerWidth
@@ -64,34 +58,11 @@
       resetOverlay()
     }
 
-    // 完全清空画布并复位状态（窗口复用 / 尺寸变化时调用）
+    // 重置选区（窗口复用 / 尺寸变化时调用）
     function resetOverlay() {
       drawing = false
       startX = 0; startY = 0; curX = 0; curY = 0
       ctx.clearRect(0, 0, vw, vh)
-      maskReady = false
-      carved = []
-    }
-
-    // 铺满一层遮罩：先整屏清空再整屏填充，保证每像素恰好一层 0.45 遮罩
-    function fillMask() {
-      ctx.clearRect(0, 0, vw, vh)
-      ctx.fillStyle = MASK
-      ctx.fillRect(0, 0, vw, vh)
-      maskReady = true
-      carved = []
-    }
-
-    // 把之前凿开的区域（旧洞/旧标签）恢复成遮罩：先清成透明再铺一层，
-    // 即使与初铺遮罩重叠也只叠加一次，不会变深
-    function restoreCarved() {
-      ctx.fillStyle = MASK
-      for (var i = 0; i < carved.length; i++) {
-        var c = carved[i]
-        ctx.clearRect(c.x, c.y, c.w, c.h)
-        ctx.fillRect(c.x, c.y, c.w, c.h)
-      }
-      carved = []
     }
 
     function roundedRect(x, y, w, h, r) {
@@ -110,8 +81,29 @@
       ctx.closePath()
     }
 
-    // 画蓝色外框 + 内层白边 + 尺寸标签，返回标签矩形（用于下次还原）
-    function drawFrame(x, y, w, h) {
+    // 每帧整屏原子重绘：整屏遮罩 → 挖空选区 → 边框/标签。
+    // 每帧都与上一帧完全无关地重建画面，杜绝增量方案留下的
+    // 边框残影/缺边问题；遮罩用 globalCompositeOperation='copy'
+    // 一次写屏（不与旧像素做 alpha 合成），每帧开销≈一次全屏写入，
+    // 软渲染下也能跟上，选框不再断续
+    function draw() {
+      var x = Math.min(startX, curX)
+      var y = Math.min(startY, curY)
+      var w = Math.abs(curX - startX)
+      var h = Math.abs(curY - startY)
+
+      // 整屏铺遮罩：copy 直接覆盖，先清后涂语义由 copy 保证
+      ctx.globalCompositeOperation = 'copy'
+      ctx.fillStyle = MASK
+      ctx.fillRect(0, 0, vw, vh)
+      ctx.globalCompositeOperation = 'source-over'
+
+      if (!drawing || w < 1 || h < 1) return
+
+      // 挖空选区，露出下方屏幕预览
+      ctx.clearRect(x, y, w, h)
+
+      // 蓝色外框 + 内层白边
       ctx.strokeStyle = '#007aff'
       ctx.lineWidth = 1.5
       ctx.strokeRect(x, y, w, h)
@@ -119,6 +111,7 @@
       ctx.lineWidth = 1
       ctx.strokeRect(x + 1, y + 1, w - 2, h - 2)
 
+      // 尺寸标签
       var label = Math.round(w) + ' × ' + Math.round(h)
       ctx.font = '12px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif'
       var tw = ctx.measureText(label).width
@@ -135,27 +128,10 @@
       ctx.fill()
       ctx.fillStyle = '#fff'
       ctx.fillText(label, lx + 6, ly + 14)
-      return { x: lx, y: ly, w: bw, h: bh }
     }
 
-    // 把选区洞迁移到 r：只重绘变化的区域（旧洞/旧标签 → 遮罩，再凿新洞、
-    // 描边），避免每帧整屏 clear+fill 在软件渲染/高分屏下导致选框卡顿断续。
-    // 仅拖动首帧整屏铺一次遮罩
-    function moveHoleTo(r) {
-      if (!maskReady) fillMask()
-      else restoreCarved()
-
-      ctx.clearRect(r.x, r.y, r.w, r.h)
-      var labelRect = drawFrame(r.x, r.y, r.w, r.h)
-      carved = [
-        { x: r.x, y: r.y, w: r.w, h: r.h },
-        labelRect,
-      ]
-    }
-
-    // rAF 合并鼠标事件：事件到达频率常高于屏幕刷新率，逐事件整屏重绘会
-    // 堆积出「顿一下跳一下」的断续感；合并到每帧只按最新位置重绘一次，
-    // 并跳过尺寸未变化的帧，选框即可平滑跟随鼠标
+    // rAF 合并鼠标事件到每帧一次：事件到达频率常高于刷新率，逐事件同步
+    // 重绘会堆积卡顿；合并后选框每帧按最新坐标平滑更新，并跳过未变化帧
     var rafPending = false
     var lastPainted = null
     function schedulePaint() {
@@ -164,14 +140,13 @@
       requestAnimationFrame(function () {
         rafPending = false
         if (!drawing) return
-        var x = Math.min(startX, curX)
-        var y = Math.min(startY, curY)
-        var w = Math.abs(curX - startX)
-        var h = Math.abs(curY - startY)
-        if (w < 1 || h < 1) return
+        var x = Math.round(Math.min(startX, curX))
+        var y = Math.round(Math.min(startY, curY))
+        var w = Math.round(Math.abs(curX - startX))
+        var h = Math.round(Math.abs(curY - startY))
         if (lastPainted && lastPainted.x === x && lastPainted.y === y &&
             lastPainted.w === w && lastPainted.h === h) return
-        moveHoleTo({ x: x, y: y, w: w, h: h })
+        draw()
         lastPainted = { x: x, y: y, w: w, h: h }
       })
     }
@@ -215,10 +190,6 @@
     function onDown(e) {
       if (e.button !== 0 || drawing) return
       drawing = true
-      // 重新开始一次完整选区：清掉上次可能残留的遮罩/标签/旧洞
-      ctx.clearRect(0, 0, vw, vh)
-      maskReady = false
-      carved = []
       lastPainted = null
       startX = e.clientX; startY = e.clientY
       curX = e.clientX; curY = e.clientY

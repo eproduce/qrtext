@@ -142,10 +142,9 @@ async function doTakeScreenshot() {
       await windowsScreenshot(tmpPath)
     }
   } finally {
-    // 截图完成后恢复窗口
-    if (process.platform === 'linux' && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show()
-      mainWindow.focus()
+    // 截图完成后恢复窗口（含透明度/最小化兜底还原）
+    if (process.platform === 'linux') {
+      restoreMainWindow()
     }
   }
 
@@ -617,27 +616,34 @@ async function captureAllDisplays() {
   throw new Error('no display captured')
 }
 
-// 隐藏主窗口并等待其真正不可见（X11 反映射是异步的，直接开抓可能把
-// 仍显示中的主窗口截进画面——「偶尔主窗口隐藏失效」的根因）。
-// 最多等 500ms，超时也放行（避免卡死截图流程）
+// 隐藏主窗口（多重兜底），确保它不会出现在截图中。
+// X11 反映射异步，且个别 WM(UKUI) 偶尔会忽略 hide()：因此先 setOpacity(0)
+// （合成桌面下即使未隐藏也不进画面），再 hide + 轮询；仍可见则再 hide 并最小化。
 async function hideMainWindowForCapture() {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  try { mainWindow.blur() } catch { /* 忽略 */ }
-  mainWindow.hide()
+  const w = mainWindow
+  if (!w || w.isDestroyed()) return
+  try { w.setOpacity(0) } catch { /* 忽略 */ }
+  try { w.blur() } catch { /* 忽略 */ }
+  w.hide()
   const t0 = Date.now()
-  while (Date.now() - t0 < 500) {
+  while (Date.now() - t0 < 300) {
     try {
-      if (mainWindow.isDestroyed() || !mainWindow.isVisible()) return
+      if (w.isDestroyed() || !w.isVisible()) return
     } catch { return }
     await new Promise((r) => setTimeout(r, 16))
   }
+  // 300ms 后仍可见：hide 可能被忽略，再 hide + 最小化兜底
+  try { if (!w.isDestroyed()) w.hide() } catch {}
+  try { if (!w.isDestroyed()) w.minimize() } catch {}
 }
 
 function restoreMainWindow() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show()
-    mainWindow.focus()
-  }
+  const w = mainWindow
+  if (!w || w.isDestroyed()) return
+  try { w.setOpacity(1) } catch { /* 忽略 */ }
+  try { w.restore() } catch { /* 忽略 */ }
+  try { w.show() } catch {}
+  try { w.focus() } catch {}
 }
 
 // 选区确认：relBounds 为选区窗口内相对坐标

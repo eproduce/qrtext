@@ -192,15 +192,13 @@ function customLinuxScreenshot() {
       return
     }
 
-    // 麒麟 UKUI：窗口管理器把全屏应用强制置于最顶，自研选区即使 ABOVE 置顶
-    // 也盖不过全屏；且离线环境不便安装 wmctrl 等第三方辅助工具。麒麟系统自带
-    // 系统级截图工具 kylin-screenshot（可盖过全屏、零第三方依赖），检测到即
-    // 回退系统截图工具，保证多屏 + 全屏场景可正常选区。
-    if (await commandExists('kylin-screenshot')) {
-      dbg('→ 回退：检测到 kylin-screenshot')
-      resolve({ ok: false, cancelled: false })
-      return
-    }
+    // 麒麟 UKUI 曾因「WM 将全屏应用强制置顶、自研选区盖不过」而整体回退
+    // kylin-screenshot。实测（Kylin V10 SP1 / X11，ccb-pc）：kylin-screenshot
+    // 以 `-a tmpPath` 调用并不产出文件 → 系统工具链整条失败，应用直接报
+    // 「未找到截图工具」不可用。因此 X11 下改为优先自研选区（有 import 时
+    // 捕获 ~0.2s，点击即出十字）；全屏遮挡交给 show 后的 raiseScreenshotWindow
+    // 尽力置顶（非 UKUI 的 X11 全屏可盖）。Wayland 仍回退系统工具。
+    dbg('X11 自研选区，desktop=', process.env.XDG_CURRENT_DESKTOP || '(none)')
 
     // 已有进行中的截图（用 resolver 判断，窗口会常驻复用）
     if (screenshotResolver) {
@@ -765,7 +763,9 @@ async function linuxScreenshot(tmpPath) {
         { cmd: 'xfce4-screenshooter', args: ['-r', '-s', tmpPath] },
         { cmd: 'deepin-screenshot', args: ['-r', '-s', tmpPath] },
         { cmd: 'maim', args: ['-s', '-u', tmpPath] },
-        { cmd: 'import', args: [tmpPath] },
+        // import 无参数是交互式（会挂起等人点选）；作为最后兜底改为非交互
+        // 整屏抓取，保证至少能出图而不至于「未找到截图工具」
+        { cmd: 'import', args: ['-window', 'root', '-strip', '-quality', '90', tmpPath] },
         { cmd: 'scrot', args: ['-s', tmpPath] },
         { cmd: 'ukui-screenshot', args: ['-a', '-s', '-o', tmpPath] },
       ]
@@ -932,6 +932,7 @@ async function probeEnvironment() {
   try { nd = screen.getAllDisplays().length } catch {}
   dbg('env platform=' + process.platform,
     'session=' + (process.env.XDG_SESSION_TYPE || '(none)') + (process.env.WAYLAND_DISPLAY ? ' wayland=yes' : ''),
+    'desktop=' + (process.env.XDG_CURRENT_DESKTOP || '(none)'),
     'displays=' + nd,
     'tools=' + (found.length ? found.join(',') : 'NONE'))
 }

@@ -215,8 +215,10 @@
       var w = Math.round(Math.abs(curX - startX))
       var h = Math.round(Math.abs(curY - startY))
       if (w < 3 || h < 3) {
+        // 单击/误触（如界面刚弹出时点到）不应视为取消——只清空状态等待
+        // 重新拖选；取消仅走 Esc / 右键，避免「没拖就截图已取消」
+        lastPainted = null
         resetOverlay()
-        api.screenshotCancel && api.screenshotCancel()
         return
       }
       api.screenshotSelect && api.screenshotSelect({ x: x, y: y, w: w, h: h })

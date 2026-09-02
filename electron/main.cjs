@@ -291,22 +291,29 @@ function sendPreviewData(captured) {
   if (screenshotWin.webContents.isLoading()) return
 
   const winBounds = screenshotWin.getBounds()
+  // 预览图仅作选区显示用（最终裁剪始终使用原生分辨率图像）。先把预览
+  // 缩放到 CSS 显示尺寸并封顶最长边，可大幅降低 JPEG 编码耗时、IPC 体积
+  // 与渲染端解码时间 —— 这是「点击截图 → 选区窗口出现」延迟的主要来源之一
+  const PREVIEW_MAX_LONG = 2048
   const preview = captured.map((c) => {
     const w = c.bounds.width
     const h = c.bounds.height
     const size = c.nativeImage.getSize()
-    // 尺寸一致时跳过 resize，减少编码前的耗时
-    const resized = (size.width === w && size.height === h)
+    const cssScale = Math.min(1, size.width / Math.max(1, w), size.height / Math.max(1, h))
+    const capScale = Math.min(1, PREVIEW_MAX_LONG / Math.max(size.width, size.height, 1))
+    const scale = Math.min(cssScale, capScale)
+    const pw = scale < 1 ? Math.max(1, Math.round(size.width * scale)) : size.width
+    const ph = scale < 1 ? Math.max(1, Math.round(size.height * scale)) : size.height
+    const previewImg = (pw === size.width && ph === size.height)
       ? c.nativeImage
-      : c.nativeImage.resize({ width: w, height: h, quality: 'good' })
+      : c.nativeImage.resize({ width: pw, height: ph, quality: 'good' })
     return {
       x: c.bounds.x - winBounds.x,
       y: c.bounds.y - winBounds.y,
       width: w,
       height: h,
-      // JPEG 70：预览图仅作选区显示用，最终裁剪使用原生分辨率图像，
-      // 降低质量可显著加快编码与传输，减少「开始截图」的等待感
-      image: 'data:image/jpeg;base64,' + resized.toJPEG(70).toString('base64'),
+      // JPEG 70：预览图仅作选区显示用，最终裁剪使用原生分辨率图像
+      image: 'data:image/jpeg;base64,' + previewImg.toJPEG(70).toString('base64'),
     }
   })
   screenshotWin.webContents.send('screenshot-data', { displays: preview })
@@ -413,8 +420,14 @@ async function captureAllDisplays() {
   const displays = screen.getAllDisplays()
   const box = getVirtualBounds(displays)
 
-  // 优先：原生工具捕获整个虚拟桌面，再按显示器边界裁剪
-  const fullImg = await tryNativeFullCapture()
+  // 优先：原生工具捕获整个虚拟桌面，再按显示器边界裁剪。
+  // 原生尝试整体限时：若某个工具存在但挂起（交互/参数错误），不会让它
+  // 耗尽多级串行超时后才回退，限时一到立即走 desktopCapturer，
+  // 直接决定「点击截图到选区出现」的体验上限
+  const fullImg = await Promise.race([
+    tryNativeFullCapture(),
+    new Promise((r) => setTimeout(() => r(null), 1600)),
+  ])
   if (fullImg) {
     const size = fullImg.getSize()
     if (size.width > 0 && size.height > 0) {
@@ -599,18 +612,25 @@ async function cropFromCapture(captured, selection) {
   }
   if (involved.length === 0) throw new Error('no display involved')
 
-  // 单显示器：直接裁剪（含缩放比换算）
+  // 单显示器：直接裁剪（含缩放比换算）。裁剪坐标/尺寸必须钳制在图像
+  // 实际像素范围内：缩放比或取整的微小偏差会让裁剪框越界，在右/下边缘
+  // 抠出一整条黑边（用户反馈「截的图带黑边」的根因）
   if (involved.length === 1) {
     const c = involved[0]
     const size = c.nativeImage.getSize()
     const scaleX = size.width / c.bounds.width
     const scaleY = size.height / c.bounds.height
-    const cropped = c.nativeImage.crop({
-      x: Math.round((selection.x - c.bounds.x) * scaleX),
-      y: Math.round((selection.y - c.bounds.y) * scaleY),
-      width: Math.round(selection.w * scaleX),
-      height: Math.round(selection.h * scaleY),
-    })
+    let cx = Math.round((selection.x - c.bounds.x) * scaleX)
+    let cy = Math.round((selection.y - c.bounds.y) * scaleY)
+    let cw = Math.round(selection.w * scaleX)
+    let ch = Math.round(selection.h * scaleY)
+    if (cx < 0) { cw += cx; cx = 0 }
+    if (cy < 0) { ch += cy; cy = 0 }
+    cw = Math.min(cw, size.width - cx)
+    ch = Math.min(ch, size.height - cy)
+    if (cw <= 0 || ch <= 0) throw new Error('crop out of image bounds')
+    const cropped = c.nativeImage.crop({ x: cx, y: cy, width: cw, height: ch })
+    if (cropped.isEmpty()) throw new Error('crop produced empty image')
     return 'data:image/png;base64,' + cropped.toPNG().toString('base64')
   }
 
@@ -831,11 +851,28 @@ function setDockIcon() {
   }
 }
 
+// X11 下 desktopCapturer 首次调用需数秒初始化屏幕捕获（Electron 固有），
+// 若机器缺少 import/maim/scrot 等原生工具会走该回退路径，冷启动极慢。
+// 应用就绪后后台预热一次（小缩略图、丢弃结果），让首次截图就能快速回退
+function warmUpDesktopCapturer() {
+  if (process.platform !== 'linux') return
+  if (process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY) return
+  try {
+    setTimeout(() => {
+      desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: 64, height: 64 },
+      }).catch(() => {})
+    }, 1500)
+  } catch { /* 预热失败可忽略，回退时仍会再次尝试 */ }
+}
+
 // ── 应用启动 ──
 app.whenReady().then(() => {
   buildMenu()
   setDockIcon()
   createMainWindow()
+  warmUpDesktopCapturer()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

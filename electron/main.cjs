@@ -628,13 +628,19 @@ async function hideMainWindowForCapture() {
   const t0 = Date.now()
   while (Date.now() - t0 < 300) {
     try {
-      if (w.isDestroyed() || !w.isVisible()) return
+      if (w.isDestroyed() || !w.isVisible()) {
+        // isVisible 变 false 后，X/合成器反映射可能还有极短余量；
+        // 再多等 80ms 再开抓，彻底避免「隐藏未生效就入图」
+        await new Promise((r) => setTimeout(r, 80))
+        return
+      }
     } catch { return }
     await new Promise((r) => setTimeout(r, 16))
   }
   // 300ms 后仍可见：hide 可能被忽略，再 hide + 最小化兜底
   try { if (!w.isDestroyed()) w.hide() } catch {}
   try { if (!w.isDestroyed()) w.minimize() } catch {}
+  await new Promise((r) => setTimeout(r, 150))
 }
 
 function restoreMainWindow() {

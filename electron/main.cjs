@@ -563,32 +563,58 @@ async function captureViaDesktopCapturer(displays, box) {
   return captured
 }
 
-// 捕获所有显示器（原生分辨率）。原生工具与 desktopCapturer 并行竞争，
-// 谁先产出有效结果用谁：某工具存在但慢/挂起时不必串行等完一轮再回退
-// —— 这正是「点击截图后还要等 ~2s」的根因
+// 粗略判断图像是否近乎全黑/空白（部分合成器/VM 下截屏可能得到全黑帧）。
+// 只采样少量像素，代价可忽略
+function isImageBlank(nativeImage) {
+  try {
+    const bmp = nativeImage.toBitmap()
+    const { width, height } = nativeImage.getSize()
+    if (!bmp || bmp.length === 0 || !width || !height) return true
+    const total = width * height
+    const step = Math.max(4, Math.floor(total / 4000))
+    let sampled = 0
+    let dark = 0
+    for (let i = 0; i + 3 < bmp.length; i += step * 4) {
+      // toBitmap 为 BGRA（黑像素三通道皆低，通道顺序不影响“是否黑”判断）
+      const b = bmp[i]
+      const g = bmp[i + 1]
+      const r = bmp[i + 2]
+      sampled++
+      if (r < 24 && g < 24 && b < 24) dark++
+    }
+    if (sampled === 0) return true
+    return dark / sampled > 0.985
+  } catch {
+    return false
+  }
+}
+
+// 捕获所有显示器（原生分辨率）。X11 下优先用原生工具（import 等）抓取：
+// desktopCapturer 在 UKUI/部分合成器/VM 上经常返回黑屏/空白帧；原生结果若是
+// 黑帧也跳过。两条路都黑时退回其中一张，避免流程空转
 async function captureAllDisplays() {
   const displays = screen.getAllDisplays()
   const box = getVirtualBounds(displays)
-  const tasks = [
-    captureNativeByDisplay(displays, box),
-    captureViaDesktopCapturer(displays, box),
-  ]
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const onOk = (r, who) => {
-      if (!settled && Array.isArray(r) && r.length > 0) {
-        settled = true
-        dbg(`捕获胜出：${who}，共 ${r.length} 屏`)
-        resolve(r)
-      }
+  const native = await captureNativeByDisplay(displays, box)
+  if (Array.isArray(native) && native.length > 0) {
+    if (!isImageBlank(native[0].nativeImage)) {
+      dbg(`捕获使用 native 原生工具，共 ${native.length} 屏`)
+      return native
     }
-    const onErr = () => {}
-    tasks[0].then((r) => onOk(r, 'native 原生工具'), onErr)
-    tasks[1].then((r) => onOk(r, 'desktopCapturer 回退'), onErr)
-    Promise.allSettled(tasks).then(() => {
-      if (!settled) reject(new Error('no display captured'))
-    })
-  })
+    dbg('native 图像近乎全黑，尝试 desktopCapturer')
+  } else {
+    dbg('native 无结果，回退 desktopCapturer')
+  }
+  const dc = await captureViaDesktopCapturer(displays, box)
+  if (Array.isArray(dc) && dc.length > 0 && !isImageBlank(dc[0].nativeImage)) {
+    dbg(`捕获使用 desktopCapturer，共 ${dc.length} 屏`)
+    return dc
+  }
+  if (Array.isArray(native) && native.length > 0) {
+    dbg('两路皆异常，退回 native 结果')
+    return native
+  }
+  throw new Error('no display captured')
 }
 
 // 隐藏主窗口并等待其真正不可见（X11 反映射是异步的，直接开抓可能把

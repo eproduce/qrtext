@@ -208,10 +208,9 @@ function customLinuxScreenshot() {
     }
     screenshotResolver = resolve
 
-    // 截图前隐藏主窗口，避免其出现在捕获画面中
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.hide()
-    }
+    // 截图前隐藏主窗口，避免其出现在捕获画面中；X11 隐藏是异步反映射，
+    // 必须等窗口真正不可见再开始捕获，否则偶尔会把主窗口截进画面
+    await hideMainWindowForCapture()
 
     // 计算所有显示器的包围盒（支持多屏，坐标可为负）
     const displays = screen.getAllDisplays()
@@ -589,6 +588,22 @@ async function captureAllDisplays() {
       if (!settled) reject(new Error('no display captured'))
     })
   })
+}
+
+// 隐藏主窗口并等待其真正不可见（X11 反映射是异步的，直接开抓可能把
+// 仍显示中的主窗口截进画面——「偶尔主窗口隐藏失效」的根因）。
+// 最多等 500ms，超时也放行（避免卡死截图流程）
+async function hideMainWindowForCapture() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  try { mainWindow.blur() } catch { /* 忽略 */ }
+  mainWindow.hide()
+  const t0 = Date.now()
+  while (Date.now() - t0 < 500) {
+    try {
+      if (mainWindow.isDestroyed() || !mainWindow.isVisible()) return
+    } catch { return }
+    await new Promise((r) => setTimeout(r, 16))
+  }
 }
 
 function restoreMainWindow() {

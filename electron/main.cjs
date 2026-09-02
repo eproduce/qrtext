@@ -341,7 +341,7 @@ function sendPreviewData(captured) {
   // 预览图仅作选区显示用（最终裁剪始终使用原生分辨率图像）。先把预览
   // 缩放到 CSS 显示尺寸并封顶最长边，可大幅降低 JPEG 编码耗时、IPC 体积
   // 与渲染端解码时间 —— 这是「点击截图 → 选区窗口出现」延迟的主要来源之一
-  const PREVIEW_MAX_LONG = 2048
+  const PREVIEW_MAX_LONG = 1600
   const preview = captured.map((c) => {
     const w = c.bounds.width
     const h = c.bounds.height
@@ -359,8 +359,8 @@ function sendPreviewData(captured) {
       y: c.bounds.y - winBounds.y,
       width: w,
       height: h,
-      // JPEG 70：预览图仅作选区显示用，最终裁剪使用原生分辨率图像
-      image: 'data:image/jpeg;base64,' + previewImg.toJPEG(70).toString('base64'),
+      // JPEG 65：预览图仅作选区显示用，最终裁剪使用原生分辨率图像
+      image: 'data:image/jpeg;base64,' + previewImg.toJPEG(65).toString('base64'),
     }
   })
   screenshotWin.webContents.send('screenshot-data', { displays: preview })
@@ -502,10 +502,10 @@ async function captureNativeByDisplay(displays, box) {
 // 注意：Linux 下 PipeWire（Wayland）/ Xinerama（X11）常只返回单个
 // 「整个虚拟桌面」source，而非每个显示器各一个 —— 多屏时必须按边界裁剪，
 // 否则整张桌面图会被赋给每个显示器导致截图内容错位/重复。
-// 最长边封顶 1600：无原生工具时取帧+PNG 编码是延迟主因，降采样可显著提速
+// 最长边封顶 1440：无原生工具时取帧+PNG 编码是延迟主因，降采样可显著提速
 async function captureViaDesktopCapturer(displays, box) {
   const maxDim = Math.max(box.width, box.height)
-  const cap = 1600
+  const cap = 1440
   const ratio = maxDim > cap ? cap / maxDim : 1
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
@@ -668,8 +668,19 @@ ipcMain.on('screenshot-ready', () => {
   // 确保 WM 将选区窗口置于其它屏幕的全屏应用之上。
   win.show()
   win.focus()
-  // 部分 WM/合成器（如 UKUI）在窗口刚映射后不会立刻按新窗口重算光标，
-  // 需派发一次合成 mouseMove，触发 hover 光标刷新为 crosshair
+  try { win.webContents.focus() } catch { /* 忽略 */ }
+  // UKUI 等 WM 在窗口刚映射后不会立刻按新窗口重算光标，导致十字不显示：
+  // 派发合成 mouseMove，并在 show 后稍作多次重试，确保 OS 光标切到 crosshair
+  refreshScreenshotCursor()
+  setTimeout(refreshScreenshotCursor, 80)
+  setTimeout(refreshScreenshotCursor, 260)
+  raiseScreenshotWindow()
+})
+
+// 向选区窗口派发一次合成 mouseMove，触发 hover 光标刷新为 crosshair
+function refreshScreenshotCursor() {
+  const win = screenshotWin
+  if (!win || win.isDestroyed()) return
   try {
     const pt = screen.getCursorScreenPoint()
     const b = win.getBounds()
@@ -679,8 +690,7 @@ ipcMain.on('screenshot-ready', () => {
       y: Math.max(0, Math.round(pt.y - b.y)),
     })
   } catch { /* 个别平台不支持，忽略 */ }
-  raiseScreenshotWindow()
-})
+}
 
 // 提升选区窗口到最顶，盖过多屏场景下其它屏幕的全屏应用。
 // X11：ABOVE 属性需在窗口映射（show）后由 WM 应用，延迟重试数次确保生效；

@@ -8,6 +8,9 @@ const path = require('path')
 const fs = require('fs')
 const os = require('os')
 
+// ── 调试日志：在终端运行 ./xxx.AppImage 时输出，用于定位 Linux 截图延迟/路径 ──
+const dbg = (...a) => console.log('[qrtext]', Date.now(), ...a)
+
 // ── 主窗口 ──
 let mainWindow = null
 
@@ -105,9 +108,12 @@ ipcMain.handle('take-screenshot', () => {
 })
 
 async function doTakeScreenshot() {
+  const t0 = Date.now()
+  dbg('take-screenshot 开始')
   // Linux：优先使用自研选区（Snipaste 式顺滑渲染，多屏/多分辨率适配）
   if (process.platform === 'linux') {
     const result = await customLinuxScreenshot()
+    dbg('customLinuxScreenshot 返回', JSON.stringify({ ...result, hasData: !!result.dataUrl }), `${Date.now() - t0}ms`)
     if (result.cancelled) {
       throw new Error('截图已取消')
     }
@@ -169,15 +175,19 @@ function writeImageToClipboard(dataUrl) {
 let screenshotWin = null
 let screenshotResolver = null
 let screenshotCapture = null // 预捕获的显示器图像 [{ bounds, scaleFactor, nativeImage }]
+let screenshotFlowStart = 0 // 一次截图流程的开始时刻（诊断用）
 
 function customLinuxScreenshot() {
   return new Promise(async (resolve) => {
+    screenshotFlowStart = Date.now()
+    dbg('自研选区启动，session=', process.env.XDG_SESSION_TYPE || '(none)')
     // 原生 Wayland 会话：普通窗口在协议上无法盖过全屏应用（全屏 surface 恒在
     // 最顶），且 getBounds 返回 {0,0}、moveTop 不受支持，自研选区在多屏 +
     // 全屏下不可靠。直接返回「未完成」，让主流程回退系统截图工具
     // （grim+slurp / spectacle / gnome-screenshot 等，走合成器接口，
     // 可盖过全屏应用进行选区）。
     if (process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY) {
+      dbg('→ 回退：Wayland 会话')
       resolve({ ok: false, cancelled: false })
       return
     }
@@ -187,12 +197,14 @@ function customLinuxScreenshot() {
     // 系统级截图工具 kylin-screenshot（可盖过全屏、零第三方依赖），检测到即
     // 回退系统截图工具，保证多屏 + 全屏场景可正常选区。
     if (await commandExists('kylin-screenshot')) {
+      dbg('→ 回退：检测到 kylin-screenshot')
       resolve({ ok: false, cancelled: false })
       return
     }
 
     // 已有进行中的截图（用 resolver 判断，窗口会常驻复用）
     if (screenshotResolver) {
+      dbg('→ 回退：已有截图进行中')
       resolve({ ok: false, cancelled: false })
       return
     }
@@ -206,6 +218,7 @@ function customLinuxScreenshot() {
     // 计算所有显示器的包围盒（支持多屏，坐标可为负）
     const displays = screen.getAllDisplays()
     const box = getVirtualBounds(displays)
+    dbg('主窗口已隐藏，开始并行 选区窗口就绪 + 捕获')
 
     // 并行：确保选区窗口就绪（复用已创建的窗口），同时捕获屏幕 ——
     // 两者互不依赖，串行执行会白白叠加等待时间，是「开始截图卡顿」的主要来源
@@ -214,11 +227,14 @@ function customLinuxScreenshot() {
       captureAllDisplays(),
     ])
       .then(([, captured]) => {
+        dbg(`捕获完成，共 ${captured.length} 屏，耗时 ${Date.now() - screenshotFlowStart}ms`)
         screenshotCapture = captured
         sendPreviewData(captured)
+        dbg('预览已发送，等待渲染端就绪→显示窗口')
       })
-      .catch(() => {
+      .catch((e) => {
         // 捕获失败 → 回退外部截图工具
+        dbg('自研选区捕获失败/回退：', e && e.message)
         screenshotCapture = null
         screenshotResolver = null
         hideSelectionWindow()
@@ -553,14 +569,16 @@ async function captureAllDisplays() {
   ]
   return new Promise((resolve, reject) => {
     let settled = false
-    const onOk = (r) => {
+    const onOk = (r, who) => {
       if (!settled && Array.isArray(r) && r.length > 0) {
         settled = true
+        dbg(`捕获胜出：${who}，共 ${r.length} 屏`)
         resolve(r)
       }
     }
     const onErr = () => {}
-    tasks.forEach((t) => t.then(onOk, onErr))
+    tasks[0].then((r) => onOk(r, 'native 原生工具'), onErr)
+    tasks[1].then((r) => onOk(r, 'desktopCapturer 回退'), onErr)
     Promise.allSettled(tasks).then(() => {
       if (!settled) reject(new Error('no display captured'))
     })
@@ -621,6 +639,7 @@ ipcMain.on('screenshot-cancel', () => {
 ipcMain.on('screenshot-ready', () => {
   const win = screenshotWin
   if (!win || win.isDestroyed()) return
+  dbg('screenshot-ready → 显示选区窗口', screenshotFlowStart ? `自启动起 ${Date.now() - screenshotFlowStart}ms` : '')
   // 先显示并聚焦（映射窗口），再提升层级。
   // 注意：moveTop/setAlwaysOnTop 在窗口未映射（隐藏）时调用会被 X11 忽略
   // （Chromium crbug.com/1260832），必须在 show() 之后执行并重试，
@@ -904,6 +923,19 @@ function setDockIcon() {
   }
 }
 
+// 打印运行环境与可用截图工具（终端可见），用于判断截图走了哪条路径、为何慢
+async function probeEnvironment() {
+  const tools = ['import','maim','scrot','gnome-screenshot','mate-screenshot','xfce4-screenshooter','kylin-screenshot','flameshot','spectacle','ukui-screenshot','deepin-screenshot','grim','slurp']
+  const found = []
+  for (const t of tools) { try { if (await commandExists(t)) found.push(t) } catch {} }
+  let nd = 0
+  try { nd = screen.getAllDisplays().length } catch {}
+  dbg('env platform=' + process.platform,
+    'session=' + (process.env.XDG_SESSION_TYPE || '(none)') + (process.env.WAYLAND_DISPLAY ? ' wayland=yes' : ''),
+    'displays=' + nd,
+    'tools=' + (found.length ? found.join(',') : 'NONE'))
+}
+
 // X11 下 desktopCapturer 首次调用需数秒初始化屏幕捕获（Electron 固有），
 // 若机器缺少 import/maim/scrot 等原生工具会走该回退路径，冷启动极慢。
 // 应用就绪后后台预热一次（小缩略图、丢弃结果），让首次截图就能快速回退
@@ -928,6 +960,8 @@ app.whenReady().then(() => {
   warmUpDesktopCapturer()
   // 稍后后台创建隐藏选区窗口，预热「新建窗口+加载页面」的开销
   setTimeout(preloadScreenshotWindow, 1200)
+  // 稍后打印运行环境与可用工具（诊断用）
+  setTimeout(probeEnvironment, 3000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -94,7 +94,17 @@ function buildMenu() {
 }
 
 // ── 系统截图 ──
-ipcMain.handle('take-screenshot', async () => {
+// 去重：上一次截图流程未结束前再次点击，直接复用同一次调用，
+// 避免快速连点并发跑两条流程（hide 窗口 + 捕获互相干扰）导致报错
+let takeScreenshotInFlight = null
+ipcMain.handle('take-screenshot', () => {
+  if (takeScreenshotInFlight) return takeScreenshotInFlight
+  takeScreenshotInFlight = doTakeScreenshot()
+    .finally(() => { takeScreenshotInFlight = null })
+  return takeScreenshotInFlight
+})
+
+async function doTakeScreenshot() {
   // Linux：优先使用自研选区（Snipaste 式顺滑渲染，多屏/多分辨率适配）
   if (process.platform === 'linux') {
     const result = await customLinuxScreenshot()
@@ -146,7 +156,7 @@ ipcMain.handle('take-screenshot', async () => {
   } catch { /* 部分 Linux 桌面环境剪贴板不可用，静默忽略 */ }
 
   return `data:image/png;base64,${buf.toString('base64')}`
-})
+}
 
 function writeImageToClipboard(dataUrl) {
   try {
@@ -438,48 +448,40 @@ async function raceNativeTools(tools) {
   return null
 }
 
-// 捕获所有显示器（原生分辨率）
-async function captureAllDisplays() {
-  const displays = screen.getAllDisplays()
-  const box = getVirtualBounds(displays)
-
-  // 优先：原生工具捕获整个虚拟桌面，再按显示器边界裁剪。
-  // 原生尝试整体限时：若某个工具存在但挂起（交互/参数错误），不会让它
-  // 耗尽多级串行超时后才回退，限时一到立即走 desktopCapturer，
-  // 直接决定「点击截图到选区出现」的体验上限
+// 原生工具捕获整个虚拟桌面 → 按显示器边界裁剪为 captured 列表；失败返回 null。
+// 整体限时：某工具存在但挂起时不耗尽多级串行超时
+async function captureNativeByDisplay(displays, box) {
   const fullImg = await Promise.race([
     tryNativeFullCapture(),
-    new Promise((r) => setTimeout(() => r(null), 1600)),
+    new Promise((r) => setTimeout(() => r(null), 1400)),
   ])
-  if (fullImg) {
-    const size = fullImg.getSize()
-    if (size.width > 0 && size.height > 0) {
-      const scaleX = size.width / box.width
-      const scaleY = size.height / box.height
-      // 捕获尺寸与虚拟桌面不成比例（如 grim 只抓聚焦屏、全屏应用切换分辨率、
-      // 某屏幕独占捕获等）→ 视为不完整，丢弃回退到 desktopCapturer
-      const ratioDiff = Math.abs(scaleX - scaleY) / Math.max(scaleX, scaleY)
-      if (ratioDiff <= 0.1) {
-        return displays.map((d) => ({
-          bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
-          scaleFactor: d.scaleFactor || 1,
-          nativeImage: fullImg.crop({
-            x: Math.round((d.bounds.x - box.x) * scaleX),
-            y: Math.round((d.bounds.y - box.y) * scaleY),
-            width: Math.round(d.bounds.width * scaleX),
-            height: Math.round(d.bounds.height * scaleY),
-          }),
-        }))
-      }
-    }
-  }
+  if (!fullImg) return null
+  const size = fullImg.getSize()
+  if (!(size.width > 0 && size.height > 0)) return null
+  const scaleX = size.width / box.width
+  const scaleY = size.height / box.height
+  // 捕获尺寸与虚拟桌面不成比例（如 grim 只抓聚焦屏、全屏应用切换分辨率、
+  // 某屏幕独占捕获等）→ 视为不完整
+  const ratioDiff = Math.abs(scaleX - scaleY) / Math.max(scaleX, scaleY)
+  if (ratioDiff > 0.1) return null
+  return displays.map((d) => ({
+    bounds: { x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height },
+    scaleFactor: d.scaleFactor || 1,
+    nativeImage: fullImg.crop({
+      x: Math.round((d.bounds.x - box.x) * scaleX),
+      y: Math.round((d.bounds.y - box.y) * scaleY),
+      width: Math.round(d.bounds.width * scaleX),
+      height: Math.round(d.bounds.height * scaleY),
+    }),
+  }))
+}
 
-  // 回退：desktopCapturer（高分辨率屏降采样以加快捕获）
-  // 注意：Linux 下 PipeWire（Wayland）/ Xinerama（X11）常只返回单个
-  // 「整个虚拟桌面」source，而非每个显示器各一个 —— 多屏时必须按边界裁剪，
-  // 否则整张桌面图会被赋给每个显示器导致截图内容错位/重复。
-  // 最长边封顶 1920：无原生工具回退时每次捕获的取帧+PNG 编码是
-  // 「点击→选区出现」延迟的主要瓶颈，适当降采样可显著缩短等待
+// desktopCapturer 回退：按显示器裁剪为 captured 列表。
+// 注意：Linux 下 PipeWire（Wayland）/ Xinerama（X11）常只返回单个
+// 「整个虚拟桌面」source，而非每个显示器各一个 —— 多屏时必须按边界裁剪，
+// 否则整张桌面图会被赋给每个显示器导致截图内容错位/重复。
+// 最长边封顶 1920：无原生工具时取帧+PNG 编码是延迟主因，降采样可显著提速
+async function captureViaDesktopCapturer(displays, box) {
   const maxDim = Math.max(box.width, box.height)
   const cap = 1920
   const ratio = maxDim > cap ? cap / maxDim : 1
@@ -537,6 +539,32 @@ async function captureAllDisplays() {
     }
   }
   return captured
+}
+
+// 捕获所有显示器（原生分辨率）。原生工具与 desktopCapturer 并行竞争，
+// 谁先产出有效结果用谁：某工具存在但慢/挂起时不必串行等完一轮再回退
+// —— 这正是「点击截图后还要等 ~2s」的根因
+async function captureAllDisplays() {
+  const displays = screen.getAllDisplays()
+  const box = getVirtualBounds(displays)
+  const tasks = [
+    captureNativeByDisplay(displays, box),
+    captureViaDesktopCapturer(displays, box),
+  ]
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const onOk = (r) => {
+      if (!settled && Array.isArray(r) && r.length > 0) {
+        settled = true
+        resolve(r)
+      }
+    }
+    const onErr = () => {}
+    tasks.forEach((t) => t.then(onOk, onErr))
+    Promise.allSettled(tasks).then(() => {
+      if (!settled) reject(new Error('no display captured'))
+    })
+  })
 }
 
 function restoreMainWindow() {

@@ -265,12 +265,16 @@ function onPaste(e: ClipboardEvent) {
 }
 
 // ── 解码：系统框选截图 ──
+const isCapturing = ref(false)
 async function takeScreenshot() {
+  // 截取中忽略重复点击，避免并发触发两条截图流程（hide 窗口互抢 → 报错）
+  if (isCapturing.value) return
   try {
     if (!isElectron) {
       showToast('截图功能仅在桌面应用中可用')
       return
     }
+    isCapturing.value = true
     const dataUrl: string = await api.takeScreenshot()
     imageSrc.value = dataUrl
     addToHistory(dataUrl)
@@ -280,6 +284,8 @@ async function takeScreenshot() {
     const msg = String(err)
     if (msg.includes('已取消')) return
     showToast('截图失败，请重试')
+  } finally {
+    isCapturing.value = false
   }
 }
 
@@ -442,12 +448,12 @@ const showDownload = computed(() => !!qrDataUrl.value)
           <p class="dropzone-title">拖拽截图到此处</p>
           <p class="dropzone-hint">或拖拽 / 粘贴截图 · 支持 Ctrl+V</p>
           <div class="dropzone-actions">
-            <button class="btn-screenshot" @click.stop="takeScreenshot">
+            <button class="btn-screenshot" @click.stop="takeScreenshot" :disabled="isCapturing">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">
                 <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
                 <circle cx="12" cy="13" r="4" />
               </svg>
-              框选截图识别
+              {{ isCapturing ? '正在截取…' : '框选截图识别' }}
             </button>
           </div>
           <input
@@ -494,12 +500,12 @@ const showDownload = computed(() => !!qrDataUrl.value)
             <button class="btn-secondary" @click="openEditor(imageSrc!)">
               ✏️ 编辑
             </button>
-            <button class="btn-secondary" @click="takeScreenshot">
+            <button class="btn-secondary" @click="takeScreenshot" :disabled="isCapturing">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">
                 <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
                 <circle cx="12" cy="13" r="4"/>
               </svg>
-              重新截图
+              {{ isCapturing ? '正在截取…' : '重新截图' }}
             </button>
             <button class="btn-secondary" @click="clearDecode">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-s">

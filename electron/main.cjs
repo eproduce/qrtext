@@ -113,7 +113,8 @@ async function doTakeScreenshot() {
   // Linux：优先使用自研选区（Snipaste 式顺滑渲染，多屏/多分辨率适配）
   if (process.platform === 'linux') {
     const result = await customLinuxScreenshot()
-    dbg('customLinuxScreenshot 返回', JSON.stringify({ ...result, hasData: !!result.dataUrl }), `${Date.now() - t0}ms`)
+    // 只记状态/布尔，绝不把 dataUrl(base64 整图)打进日志
+    dbg('customLinuxScreenshot 返回', JSON.stringify({ ok: result.ok, cancelled: result.cancelled, hasData: !!result.dataUrl }), `${Date.now() - t0}ms`)
     if (result.cancelled) {
       throw new Error('截图已取消')
     }
